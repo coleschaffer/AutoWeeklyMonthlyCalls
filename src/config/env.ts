@@ -16,6 +16,8 @@ const envSchema = z.object({
   GOOGLE_REFRESH_TOKEN: z.string().min(1),
   YOUTUBE_CHANNEL_ID: z.string().min(1),
   DRIVE_FOLDER_ID: z.string().min(1),
+  DRIVE_WEEKLY_FOLDER_ID: z.string().min(1),
+  DRIVE_MONTHLY_FOLDER_ID: z.string().min(1),
 
   // ActiveCampaign
   ACTIVECAMPAIGN_API_URL: z.string().url(),
@@ -83,6 +85,8 @@ function createDevConfig() {
     GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN || '',
     YOUTUBE_CHANNEL_ID: process.env.YOUTUBE_CHANNEL_ID || '',
     DRIVE_FOLDER_ID: process.env.DRIVE_FOLDER_ID || '',
+    DRIVE_WEEKLY_FOLDER_ID: process.env.DRIVE_WEEKLY_FOLDER_ID || '',
+    DRIVE_MONTHLY_FOLDER_ID: process.env.DRIVE_MONTHLY_FOLDER_ID || '',
 
     // ActiveCampaign
     ACTIVECAMPAIGN_API_URL: process.env.ACTIVECAMPAIGN_API_URL || 'https://placeholder.api-us1.com',

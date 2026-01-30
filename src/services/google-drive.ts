@@ -1,8 +1,8 @@
 import { google } from 'googleapis';
 import fs from 'fs';
-import path from 'path';
 import { env } from '../config/env.js';
-import type { DriveUploadResult, DriveUploadFiles } from '../types/index.js';
+import type { DriveUploadResult, DriveUploadFiles, CallType } from '../types/index.js';
+import { format } from 'date-fns';
 
 const oauth2Client = new google.auth.OAuth2(
   env.GOOGLE_CLIENT_ID,
@@ -16,17 +16,70 @@ oauth2Client.setCredentials({
 const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
 /**
+ * Get the parent folder ID based on call type
+ */
+function getParentFolderId(callType: CallType): string {
+  return callType === 'weekly'
+    ? env.DRIVE_WEEKLY_FOLDER_ID
+    : env.DRIVE_MONTHLY_FOLDER_ID;
+}
+
+/**
+ * Format date for folder name: YYYY.MM.DD (e.g., 2026.01.06)
+ */
+export function formatDateForFolder(date: Date): string {
+  return format(date, 'yyyy.MM.dd');
+}
+
+/**
+ * Create a date subfolder in the appropriate call type folder
+ */
+export async function createDateSubfolder(
+  date: Date,
+  callType: CallType
+): Promise<string> {
+  const folderName = formatDateForFolder(date);
+  const parentFolderId = getParentFolderId(callType);
+
+  // Check if folder already exists
+  const existingFolder = await drive.files.list({
+    q: `name='${folderName}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id, name)',
+  });
+
+  if (existingFolder.data.files && existingFolder.data.files.length > 0) {
+    console.log(`Folder ${folderName} already exists, using existing folder`);
+    return existingFolder.data.files[0].id!;
+  }
+
+  // Create new folder
+  const fileMetadata = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: [parentFolderId],
+  };
+
+  const response = await drive.files.create({
+    requestBody: fileMetadata,
+    fields: 'id',
+  });
+
+  console.log(`Created folder: ${folderName}`);
+  return response.data.id!;
+}
+
+/**
  * Upload a file to Google Drive
  */
 export async function uploadFile(
   filePath: string,
   fileName: string,
   mimeType: string,
-  folderId?: string
+  folderId: string
 ): Promise<DriveUploadResult> {
   const fileMetadata = {
     name: fileName,
-    parents: folderId ? [folderId] : [env.DRIVE_FOLDER_ID],
+    parents: [folderId],
   };
 
   const media = {
@@ -60,28 +113,30 @@ export async function uploadFile(
 }
 
 /**
- * Upload video file to Drive
+ * Upload video file (.mp4) to Drive
  */
 export async function uploadVideo(
   videoPath: string,
-  fileName: string
+  fileName: string,
+  folderId: string
 ): Promise<DriveUploadResult> {
-  return uploadFile(videoPath, fileName, 'video/mp4');
+  return uploadFile(videoPath, fileName, 'video/mp4', folderId);
 }
 
 /**
- * Upload transcript file to Drive
+ * Upload transcript file (.vtt) to Drive
  */
 export async function uploadTranscript(
   transcriptContent: string,
-  fileName: string
+  fileName: string,
+  folderId: string
 ): Promise<DriveUploadResult> {
   // Write transcript to temp file
   const tempPath = `/tmp/${fileName}`;
   fs.writeFileSync(tempPath, transcriptContent, 'utf-8');
 
   try {
-    const result = await uploadFile(tempPath, fileName, 'text/plain');
+    const result = await uploadFile(tempPath, fileName, 'text/vtt', folderId);
     return result;
   } finally {
     // Clean up temp file
@@ -94,17 +149,18 @@ export async function uploadTranscript(
 }
 
 /**
- * Upload chat file to Drive
+ * Upload chat file (.txt) to Drive
  */
 export async function uploadChat(
   chatContent: string,
-  fileName: string
+  fileName: string,
+  folderId: string
 ): Promise<DriveUploadResult> {
   const tempPath = `/tmp/${fileName}`;
   fs.writeFileSync(tempPath, chatContent, 'utf-8');
 
   try {
-    const result = await uploadFile(tempPath, fileName, 'text/plain');
+    const result = await uploadFile(tempPath, fileName, 'text/plain', folderId);
     return result;
   } finally {
     try {
@@ -116,11 +172,16 @@ export async function uploadChat(
 }
 
 /**
- * Upload all call files to Drive
+ * Upload all call files to Drive with proper folder structure
+ *
+ * Structure:
+ * - Weekly: CA Pro Weekly Training Calls / YYYY.MM.DD / files
+ * - Monthly: CA Pro Business Owner Calls / YYYY.MM.DD / files
  */
 export async function uploadCallFiles(
-  dateStr: string,
-  callType: string,
+  date: Date,
+  callType: CallType,
+  topic: string,
   files: {
     videoPath?: string;
     transcriptContent?: string;
@@ -128,48 +189,49 @@ export async function uploadCallFiles(
   }
 ): Promise<DriveUploadFiles> {
   const result: DriveUploadFiles = {};
-  const prefix = `${dateStr}_CA_Pro_${callType}`;
 
+  // Create date subfolder (e.g., 2026.01.06)
+  const folderId = await createDateSubfolder(date, callType);
+
+  // Generate file names
+  const dateStr = formatDateForFolder(date);
+  const sanitizedTopic = topic.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
+  const prefix = `${dateStr}_${sanitizedTopic}`;
+
+  // Upload video (.mp4)
   if (files.videoPath) {
+    console.log('Uploading video to Google Drive...');
     result.video = await uploadVideo(
       files.videoPath,
-      `${prefix}_Recording.mp4`
+      `${prefix}.mp4`,
+      folderId
     );
+    console.log(`Video uploaded: ${result.video.webViewLink}`);
   }
 
+  // Upload transcript (.vtt)
   if (files.transcriptContent) {
+    console.log('Uploading transcript to Google Drive...');
     result.transcript = await uploadTranscript(
       files.transcriptContent,
-      `${prefix}_Transcript.txt`
+      `${prefix}_transcript.vtt`,
+      folderId
     );
+    console.log(`Transcript uploaded: ${result.transcript.webViewLink}`);
   }
 
+  // Upload chat (.txt)
   if (files.chatContent) {
+    console.log('Uploading chat to Google Drive...');
     result.chat = await uploadChat(
       files.chatContent,
-      `${prefix}_Chat.txt`
+      `${prefix}_chat.txt`,
+      folderId
     );
+    console.log(`Chat uploaded: ${result.chat.webViewLink}`);
   }
 
   return result;
-}
-
-/**
- * Create a subfolder in the main folder
- */
-export async function createSubfolder(folderName: string): Promise<string> {
-  const fileMetadata = {
-    name: folderName,
-    mimeType: 'application/vnd.google-apps.folder',
-    parents: [env.DRIVE_FOLDER_ID],
-  };
-
-  const response = await drive.files.create({
-    requestBody: fileMetadata,
-    fields: 'id',
-  });
-
-  return response.data.id!;
 }
 
 /**
@@ -193,4 +255,16 @@ export async function checkDriveConnection(): Promise<boolean> {
  */
 export function getShareableLink(fileId: string): string {
   return `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+}
+
+/**
+ * List files in a folder
+ */
+export async function listFilesInFolder(folderId: string) {
+  const response = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false`,
+    fields: 'files(id, name, mimeType, webViewLink)',
+  });
+
+  return response.data.files || [];
 }

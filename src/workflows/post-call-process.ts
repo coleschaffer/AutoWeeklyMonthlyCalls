@@ -49,9 +49,12 @@ export async function processRecording(
     console.log('Step 2: Processing transcript...');
     let transcript: ZoomTranscript | null = null;
     let transcriptText = '';
+    let rawVttContent = '';
     let trimStartSeconds = 0;
 
     if (recording.transcriptUrl) {
+      // Get raw VTT content for Drive upload
+      rawVttContent = await zoom.getRawTranscriptContent(recording.transcriptUrl);
       transcript = await zoom.getTranscript(meetingId, recording.transcriptUrl);
       transcriptText = extractPlainText(transcript);
       trimStartSeconds = findConversationStart(transcript);
@@ -110,12 +113,13 @@ export async function processRecording(
     }
 
     const driveLinks = await googleDrive.uploadCallFiles(
-      dateStr,
-      callType === 'weekly' ? 'Weekly' : 'Monthly',
+      recording.startTime,
+      callType,
+      topic,
       {
         videoPath: trimResult.outputPath,
-        transcriptContent: transcriptText || 'No transcript available',
-        chatContent: chatContent || 'No chat transcript available',
+        transcriptContent: rawVttContent || undefined,
+        chatContent: chatContent || undefined,
       }
     );
     console.log('Google Drive upload complete');

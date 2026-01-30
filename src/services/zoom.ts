@@ -173,6 +173,22 @@ export async function getTranscript(
 }
 
 /**
+ * Get raw VTT transcript content (for uploading to Drive)
+ */
+export async function getRawTranscriptContent(transcriptUrl: string): Promise<string> {
+  const token = await getAccessToken();
+
+  const response = await axios.get(transcriptUrl, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    responseType: 'text',
+  });
+
+  return response.data;
+}
+
+/**
  * Download recording file to local path
  */
 export async function downloadRecording(

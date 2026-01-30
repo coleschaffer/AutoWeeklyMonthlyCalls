@@ -9,7 +9,8 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "get-google-token": "tsx scripts/get-google-token.ts"
   },
   "keywords": [
     "automation",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
+    "open": "^10.1.0",
     "@types/express": "^4.17.21",
     "@types/fluent-ffmpeg": "^2.1.26",
     "@types/node": "^22.0.0",
