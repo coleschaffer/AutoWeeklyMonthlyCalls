@@ -1,24 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import cron from 'node-cron';
+import crypto from 'crypto';
 import { config, env } from './config/env.js';
-import { CRON_SCHEDULES } from './config/schedule.js';
-import {
-  validateWebhook,
-  handleUrlValidation,
-} from './services/zoom.js';
-import {
-  processRecording,
-  processRecordingManual,
-} from './workflows/post-call-process.js';
-import {
-  sendWeeklyDayBeforeReminder,
-  sendWeeklyHourBeforeReminder,
-  sendMonthlyWeekBeforeReminder,
-  sendMonthlyDayBeforeReminder,
-  sendMonthlyDayOfReminder,
-} from './workflows/pre-call-reminder.js';
-import type { ApiResponse, ZoomWebhookPayload } from './types/index.js';
+import type { ApiResponse } from './types/index.js';
 
 const app = express();
 
@@ -54,52 +38,66 @@ app.get('/health', (_req: Request, res: Response) => {
 // ===========================================
 
 app.post('/webhooks/zoom', async (req: Request, res: Response) => {
-  const signature = req.headers['x-zm-signature'] as string;
-  const timestamp = req.headers['x-zm-request-timestamp'] as string;
+  console.log('Zoom webhook received:', req.body?.event);
 
   // Handle URL validation challenge from Zoom
   if (req.body.event === 'endpoint.url_validation') {
     const plainToken = req.body.payload.plainToken;
-    const response = handleUrlValidation(plainToken);
     console.log('Zoom URL validation challenge received');
-    return res.json(response);
+
+    // Generate encrypted token using webhook secret
+    const encryptedToken = crypto
+      .createHmac('sha256', env.ZOOM_WEBHOOK_SECRET)
+      .update(plainToken)
+      .digest('hex');
+
+    return res.json({ plainToken, encryptedToken });
   }
 
-  // Validate webhook signature
-  const validation = validateWebhook(
-    JSON.stringify(req.body),
-    signature,
-    timestamp
-  );
+  // Validate webhook signature for other events
+  const signature = req.headers['x-zm-signature'] as string;
+  const timestamp = req.headers['x-zm-request-timestamp'] as string;
 
-  if (!validation.isValid) {
-    console.error('Invalid Zoom webhook signature:', validation.error);
-    return res.status(401).json({
-      success: false,
-      error: 'Invalid signature',
-      timestamp: new Date().toISOString(),
-    });
+  if (signature && timestamp && env.ZOOM_WEBHOOK_SECRET) {
+    const message = `v0:${timestamp}:${JSON.stringify(req.body)}`;
+    const hashForVerify = crypto
+      .createHmac('sha256', env.ZOOM_WEBHOOK_SECRET)
+      .update(message)
+      .digest('hex');
+    const expectedSignature = `v0=${hashForVerify}`;
+
+    if (signature !== expectedSignature) {
+      console.error('Invalid Zoom webhook signature');
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid signature',
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
-
-  const payload = validation.payload as ZoomWebhookPayload;
 
   // Handle recording completed event
-  if (payload.event === 'recording.completed') {
+  if (req.body.event === 'recording.completed') {
     console.log('Recording completed webhook received');
-    console.log(`Meeting: ${payload.payload.object.topic}`);
+    console.log(`Meeting: ${req.body.payload?.object?.topic}`);
 
-    // Process asynchronously (don't block webhook response)
-    processRecording(payload)
-      .then(result => {
-        if (result.success) {
-          console.log(`Processing complete for ${result.meetingId}`);
-        } else {
-          console.error(`Processing failed: ${result.error}`);
-        }
-      })
-      .catch(error => {
-        console.error('Processing error:', error);
-      });
+    // Dynamically import and process (lazy load)
+    try {
+      const { processRecording } = await import('./workflows/post-call-process.js');
+      processRecording(req.body)
+        .then(result => {
+          if (result.success) {
+            console.log(`Processing complete for ${result.meetingId}`);
+          } else {
+            console.error(`Processing failed: ${result.error}`);
+          }
+        })
+        .catch(error => {
+          console.error('Processing error:', error);
+        });
+    } catch (error) {
+      console.error('Failed to load processing module:', error);
+    }
 
     // Acknowledge webhook immediately
     return res.json({
@@ -134,14 +132,18 @@ app.post('/api/process-call', async (req: Request, res: Response) => {
 
   console.log(`Manual processing triggered for: ${meetingId}`);
 
-  // Process asynchronously
-  processRecordingManual(meetingId)
-    .then(result => {
-      console.log(`Manual processing result:`, result);
-    })
-    .catch(error => {
-      console.error('Manual processing error:', error);
-    });
+  try {
+    const { processRecordingManual } = await import('./workflows/post-call-process.js');
+    processRecordingManual(meetingId)
+      .then(result => {
+        console.log(`Manual processing result:`, result);
+      })
+      .catch(error => {
+        console.error('Manual processing error:', error);
+      });
+  } catch (error) {
+    console.error('Failed to load processing module:', error);
+  }
 
   res.json({
     success: true,
@@ -155,54 +157,45 @@ app.post('/api/process-call', async (req: Request, res: Response) => {
 // Reminder Trigger Endpoints (for testing)
 // ===========================================
 
-app.post('/api/reminders/weekly/day-before', async (_req: Request, res: Response) => {
-  console.log('Manual trigger: Weekly day-before reminder');
-  const result = await sendWeeklyDayBeforeReminder();
-  res.json({
-    success: result.success,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
-});
+app.post('/api/reminders/:type/:timing', async (req: Request, res: Response) => {
+  const { type, timing } = req.params;
+  console.log(`Manual trigger: ${type} ${timing} reminder`);
 
-app.post('/api/reminders/weekly/hour-before', async (_req: Request, res: Response) => {
-  console.log('Manual trigger: Weekly hour-before reminder');
-  const result = await sendWeeklyHourBeforeReminder();
-  res.json({
-    success: result.success,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
-});
+  try {
+    const reminders = await import('./workflows/pre-call-reminder.js');
 
-app.post('/api/reminders/monthly/week-before', async (_req: Request, res: Response) => {
-  console.log('Manual trigger: Monthly week-before reminder');
-  const result = await sendMonthlyWeekBeforeReminder();
-  res.json({
-    success: result.success,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
-});
+    let result;
+    if (type === 'weekly' && timing === 'day-before') {
+      result = await reminders.sendWeeklyDayBeforeReminder();
+    } else if (type === 'weekly' && timing === 'hour-before') {
+      result = await reminders.sendWeeklyHourBeforeReminder();
+    } else if (type === 'monthly' && timing === 'week-before') {
+      result = await reminders.sendMonthlyWeekBeforeReminder();
+    } else if (type === 'monthly' && timing === 'day-before') {
+      result = await reminders.sendMonthlyDayBeforeReminder();
+    } else if (type === 'monthly' && timing === 'day-of') {
+      result = await reminders.sendMonthlyDayOfReminder();
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid reminder type/timing',
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-app.post('/api/reminders/monthly/day-before', async (_req: Request, res: Response) => {
-  console.log('Manual trigger: Monthly day-before reminder');
-  const result = await sendMonthlyDayBeforeReminder();
-  res.json({
-    success: result.success,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.post('/api/reminders/monthly/day-of', async (_req: Request, res: Response) => {
-  console.log('Manual trigger: Monthly day-of reminder');
-  const result = await sendMonthlyDayOfReminder();
-  res.json({
-    success: result.success,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
+    res.json({
+      success: result.success,
+      data: result,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Reminder error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send reminder',
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // ===========================================
@@ -214,18 +207,14 @@ app.get('/api/status', (_req: Request, res: Response) => {
     success: true,
     data: {
       environment: env.NODE_ENV,
-      schedules: {
-        weeklyCall: {
-          day: config.weeklyCall.day,
-          hour: config.weeklyCall.hour,
-        },
-        monthlyCall: {
-          week: config.monthlyCall.week,
-          day: config.monthlyCall.day,
-          hour: config.monthlyCall.hour,
-        },
+      configured: {
+        zoom: !!env.ZOOM_WEBHOOK_SECRET,
+        google: !!env.GOOGLE_REFRESH_TOKEN,
+        activeCampaign: !!env.ACTIVECAMPAIGN_API_KEY,
+        twilio: !!env.TWILIO_ACCOUNT_SID,
+        circle: !!env.CIRCLE_API_KEY,
+        anthropic: !!env.ANTHROPIC_API_KEY,
       },
-      cronJobs: CRON_SCHEDULES,
     },
     timestamp: new Date().toISOString(),
   });
@@ -245,58 +234,51 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 // ===========================================
-// Cron Jobs Setup
+// Cron Jobs Setup (lazy loaded)
 // ===========================================
 
-function setupCronJobs() {
-  console.log('Setting up cron jobs...');
+async function setupCronJobs() {
+  try {
+    const cron = await import('node-cron');
+    const { CRON_SCHEDULES } = await import('./config/schedule.js');
+    const reminders = await import('./workflows/pre-call-reminder.js');
 
-  // Weekly day-before reminder: Monday 1 PM
-  cron.schedule(CRON_SCHEDULES.weeklyDayBefore, async () => {
-    console.log('Cron: Weekly day-before reminder');
-    await sendWeeklyDayBeforeReminder();
-  }, {
-    timezone: env.TIMEZONE,
-  });
+    console.log('Setting up cron jobs...');
 
-  // Weekly hour-before reminder: Tuesday 12 PM
-  cron.schedule(CRON_SCHEDULES.weeklyHourBefore, async () => {
-    console.log('Cron: Weekly hour-before reminder');
-    await sendWeeklyHourBeforeReminder();
-  }, {
-    timezone: env.TIMEZONE,
-  });
+    // Weekly day-before reminder: Monday 1 PM
+    cron.default.schedule(CRON_SCHEDULES.weeklyDayBefore, async () => {
+      console.log('Cron: Weekly day-before reminder');
+      await reminders.sendWeeklyDayBeforeReminder();
+    }, { timezone: env.TIMEZONE });
 
-  // Monthly week-before check: Monday 9 AM
-  cron.schedule(CRON_SCHEDULES.monthlyWeekBefore, async () => {
-    console.log('Cron: Monthly week-before check');
-    await sendMonthlyWeekBeforeReminder();
-  }, {
-    timezone: env.TIMEZONE,
-  });
+    // Weekly hour-before reminder: Tuesday 12 PM
+    cron.default.schedule(CRON_SCHEDULES.weeklyHourBefore, async () => {
+      console.log('Cron: Weekly hour-before reminder');
+      await reminders.sendWeeklyHourBeforeReminder();
+    }, { timezone: env.TIMEZONE });
 
-  // Monthly day-before check: Sunday 1 PM
-  cron.schedule(CRON_SCHEDULES.monthlyDayBefore, async () => {
-    console.log('Cron: Monthly day-before check');
-    await sendMonthlyDayBeforeReminder();
-  }, {
-    timezone: env.TIMEZONE,
-  });
+    // Monthly week-before check: Monday 9 AM
+    cron.default.schedule(CRON_SCHEDULES.monthlyWeekBefore, async () => {
+      console.log('Cron: Monthly week-before check');
+      await reminders.sendMonthlyWeekBeforeReminder();
+    }, { timezone: env.TIMEZONE });
 
-  // Monthly day-of check: Monday 1 PM
-  cron.schedule(CRON_SCHEDULES.monthlyDayOf, async () => {
-    console.log('Cron: Monthly day-of check');
-    await sendMonthlyDayOfReminder();
-  }, {
-    timezone: env.TIMEZONE,
-  });
+    // Monthly day-before check: Sunday 1 PM
+    cron.default.schedule(CRON_SCHEDULES.monthlyDayBefore, async () => {
+      console.log('Cron: Monthly day-before check');
+      await reminders.sendMonthlyDayBeforeReminder();
+    }, { timezone: env.TIMEZONE });
 
-  console.log('Cron jobs configured:');
-  console.log(`  - Weekly day-before: ${CRON_SCHEDULES.weeklyDayBefore}`);
-  console.log(`  - Weekly hour-before: ${CRON_SCHEDULES.weeklyHourBefore}`);
-  console.log(`  - Monthly week-before: ${CRON_SCHEDULES.monthlyWeekBefore}`);
-  console.log(`  - Monthly day-before: ${CRON_SCHEDULES.monthlyDayBefore}`);
-  console.log(`  - Monthly day-of: ${CRON_SCHEDULES.monthlyDayOf}`);
+    // Monthly day-of check: Monday 1 PM
+    cron.default.schedule(CRON_SCHEDULES.monthlyDayOf, async () => {
+      console.log('Cron: Monthly day-of check');
+      await reminders.sendMonthlyDayOfReminder();
+    }, { timezone: env.TIMEZONE });
+
+    console.log('Cron jobs configured');
+  } catch (error) {
+    console.error('Failed to setup cron jobs:', error);
+  }
 }
 
 // ===========================================
@@ -311,20 +293,17 @@ app.listen(PORT, () => {
   console.log('===========================================');
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${env.NODE_ENV}`);
-  console.log(`Timezone: ${env.TIMEZONE}`);
-  console.log('');
-
-  // Setup cron jobs
-  setupCronJobs();
-
   console.log('');
   console.log('Endpoints:');
   console.log(`  GET  /health - Health check`);
   console.log(`  POST /webhooks/zoom - Zoom webhook receiver`);
   console.log(`  POST /api/process-call?meetingId=XXX - Manual trigger`);
-  console.log(`  POST /api/reminders/* - Manual reminder triggers`);
+  console.log(`  POST /api/reminders/:type/:timing - Manual reminder triggers`);
   console.log(`  GET  /api/status - System status`);
   console.log('===========================================');
+
+  // Setup cron jobs after server starts (non-blocking)
+  setupCronJobs();
 });
 
 export default app;
