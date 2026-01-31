@@ -1,13 +1,9 @@
 import * as activeCampaign from '../services/activecampaign.js';
 import * as twilio from '../services/twilio.js';
+import * as zoom from '../services/zoom.js';
 import { EMAIL_TEMPLATES, WHATSAPP_TEMPLATES } from '../config/schedule.js';
-import {
-  isDayBeforeWeeklyCall,
-  isFourthMonday,
-  isTomorrowFourthMonday,
-  isNextWeekFourthMonday,
-  getCurrentTime,
-} from '../utils/date-helpers.js';
+import { getCurrentTime } from '../utils/date-helpers.js';
+import { addDays } from 'date-fns';
 import type { CallType } from '../types/index.js';
 
 type ReminderType = 'dayBefore' | 'hourBefore' | 'weekBefore' | 'dayOf';
@@ -18,95 +14,232 @@ interface ReminderResult {
   reminderType: ReminderType;
   emailSent: boolean;
   whatsappSent: boolean;
+  scheduledCall?: {
+    topic: string;
+    startTime: Date;
+  };
   errors: string[];
 }
 
 /**
  * Send weekly call reminder (day before - Monday)
+ * Checks Zoom schedule for tomorrow's call
  */
 export async function sendWeeklyDayBeforeReminder(): Promise<ReminderResult> {
-  const now = getCurrentTime();
+  try {
+    const tomorrowsCall = await zoom.getTomorrowsCall();
 
-  if (!isDayBeforeWeeklyCall(now)) {
+    if (!tomorrowsCall || tomorrowsCall.type !== 'weekly') {
+      return {
+        success: true,
+        callType: 'weekly',
+        reminderType: 'dayBefore',
+        emailSent: false,
+        whatsappSent: false,
+        errors: ['No weekly call scheduled for tomorrow in Zoom'],
+      };
+    }
+
+    const result = await sendReminder('weekly', 'dayBefore');
     return {
-      success: true,
-      callType: 'weekly',
-      reminderType: 'dayBefore',
-      emailSent: false,
-      whatsappSent: false,
-      errors: ['Not the day before weekly call'],
+      ...result,
+      scheduledCall: {
+        topic: tomorrowsCall.topic,
+        startTime: tomorrowsCall.startTime,
+      },
     };
-  }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to check Zoom schedule:', errorMessage);
 
-  return sendReminder('weekly', 'dayBefore');
+    // Fallback: send reminder anyway if Zoom API fails
+    console.log('Falling back to sending reminder without Zoom check');
+    return sendReminder('weekly', 'dayBefore');
+  }
 }
 
 /**
  * Send weekly call reminder (hour before - Tuesday)
+ * Checks Zoom schedule for today's call
  */
 export async function sendWeeklyHourBeforeReminder(): Promise<ReminderResult> {
-  // This is triggered by cron at 12 PM on Tuesday
-  return sendReminder('weekly', 'hourBefore');
+  try {
+    const meetings = await zoom.getUpcomingMeetings(1);
+    const today = getCurrentTime();
+
+    const todaysWeeklyCall = meetings.find(m => {
+      const meetingDate = m.startTime;
+      return m.type === 'weekly' &&
+             meetingDate.getFullYear() === today.getFullYear() &&
+             meetingDate.getMonth() === today.getMonth() &&
+             meetingDate.getDate() === today.getDate();
+    });
+
+    if (!todaysWeeklyCall) {
+      return {
+        success: true,
+        callType: 'weekly',
+        reminderType: 'hourBefore',
+        emailSent: false,
+        whatsappSent: false,
+        errors: ['No weekly call scheduled for today in Zoom'],
+      };
+    }
+
+    const result = await sendReminder('weekly', 'hourBefore');
+    return {
+      ...result,
+      scheduledCall: {
+        topic: todaysWeeklyCall.topic,
+        startTime: todaysWeeklyCall.startTime,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to check Zoom schedule:', errorMessage);
+    return sendReminder('weekly', 'hourBefore');
+  }
 }
 
 /**
  * Send monthly call reminder (week before)
+ * Checks if there's a monthly call scheduled within the next 7-10 days
  */
 export async function sendMonthlyWeekBeforeReminder(): Promise<ReminderResult> {
-  const now = getCurrentTime();
+  try {
+    const meetings = await zoom.getUpcomingMeetings(10);
+    const now = getCurrentTime();
+    const weekFromNow = addDays(now, 7);
 
-  if (!isNextWeekFourthMonday(now)) {
+    // Find monthly call happening 5-10 days from now
+    const upcomingMonthlyCall = meetings.find(m => {
+      if (m.type !== 'monthly') return false;
+      const daysUntil = Math.floor((m.startTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return daysUntil >= 5 && daysUntil <= 10;
+    });
+
+    if (!upcomingMonthlyCall) {
+      return {
+        success: true,
+        callType: 'monthly',
+        reminderType: 'weekBefore',
+        emailSent: false,
+        whatsappSent: false,
+        errors: ['No monthly call scheduled within next week in Zoom'],
+      };
+    }
+
+    const result = await sendReminder('monthly', 'weekBefore');
     return {
-      success: true,
+      ...result,
+      scheduledCall: {
+        topic: upcomingMonthlyCall.topic,
+        startTime: upcomingMonthlyCall.startTime,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to check Zoom schedule:', errorMessage);
+    return {
+      success: false,
       callType: 'monthly',
       reminderType: 'weekBefore',
       emailSent: false,
       whatsappSent: false,
-      errors: ['Next week is not the 4th Monday'],
+      errors: [`Zoom API error: ${errorMessage}`],
     };
   }
-
-  return sendReminder('monthly', 'weekBefore');
 }
 
 /**
  * Send monthly call reminder (day before - Sunday)
+ * Checks if there's a monthly call scheduled for tomorrow
  */
 export async function sendMonthlyDayBeforeReminder(): Promise<ReminderResult> {
-  const now = getCurrentTime();
+  try {
+    const tomorrowsCall = await zoom.getTomorrowsCall();
 
-  if (!isTomorrowFourthMonday(now)) {
+    if (!tomorrowsCall || tomorrowsCall.type !== 'monthly') {
+      return {
+        success: true,
+        callType: 'monthly',
+        reminderType: 'dayBefore',
+        emailSent: false,
+        whatsappSent: false,
+        errors: ['No monthly call scheduled for tomorrow in Zoom'],
+      };
+    }
+
+    const result = await sendReminder('monthly', 'dayBefore');
     return {
-      success: true,
+      ...result,
+      scheduledCall: {
+        topic: tomorrowsCall.topic,
+        startTime: tomorrowsCall.startTime,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to check Zoom schedule:', errorMessage);
+    return {
+      success: false,
       callType: 'monthly',
       reminderType: 'dayBefore',
       emailSent: false,
       whatsappSent: false,
-      errors: ['Tomorrow is not the 4th Monday'],
+      errors: [`Zoom API error: ${errorMessage}`],
     };
   }
-
-  return sendReminder('monthly', 'dayBefore');
 }
 
 /**
- * Send monthly call reminder (day of - 4th Monday)
+ * Send monthly call reminder (day of - Monday)
+ * Checks if there's a monthly call scheduled for today
  */
 export async function sendMonthlyDayOfReminder(): Promise<ReminderResult> {
-  const now = getCurrentTime();
+  try {
+    const meetings = await zoom.getUpcomingMeetings(1);
+    const today = getCurrentTime();
 
-  if (!isFourthMonday(now)) {
+    const todaysMonthlyCall = meetings.find(m => {
+      const meetingDate = m.startTime;
+      return m.type === 'monthly' &&
+             meetingDate.getFullYear() === today.getFullYear() &&
+             meetingDate.getMonth() === today.getMonth() &&
+             meetingDate.getDate() === today.getDate();
+    });
+
+    if (!todaysMonthlyCall) {
+      return {
+        success: true,
+        callType: 'monthly',
+        reminderType: 'dayOf',
+        emailSent: false,
+        whatsappSent: false,
+        errors: ['No monthly call scheduled for today in Zoom'],
+      };
+    }
+
+    const result = await sendReminder('monthly', 'dayOf');
     return {
-      success: true,
+      ...result,
+      scheduledCall: {
+        topic: todaysMonthlyCall.topic,
+        startTime: todaysMonthlyCall.startTime,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to check Zoom schedule:', errorMessage);
+    return {
+      success: false,
       callType: 'monthly',
       reminderType: 'dayOf',
       emailSent: false,
       whatsappSent: false,
-      errors: ['Today is not the 4th Monday'],
+      errors: [`Zoom API error: ${errorMessage}`],
     };
   }
-
-  return sendReminder('monthly', 'dayOf');
 }
 
 /**
@@ -179,7 +312,7 @@ async function sendReminder(
 
 /**
  * Run all reminder checks (called by cron)
- * Determines which reminders should be sent based on current date/time
+ * Determines which reminders should be sent based on Zoom schedule
  */
 export async function runReminderChecks(): Promise<ReminderResult[]> {
   const results: ReminderResult[] = [];
@@ -216,4 +349,23 @@ export async function runReminderChecks(): Promise<ReminderResult[]> {
   }
 
   return results;
+}
+
+/**
+ * Get upcoming calls from Zoom (for debugging/status check)
+ */
+export async function getUpcomingCallsStatus(): Promise<{
+  upcomingCalls: zoom.ScheduledMeeting[];
+  nextWeeklyCall: zoom.ScheduledMeeting | null;
+  nextMonthlyCall: zoom.ScheduledMeeting | null;
+}> {
+  const upcomingCalls = await zoom.getUpcomingMeetings(30);
+  const nextWeeklyCall = await zoom.getNextScheduledCall('weekly');
+  const nextMonthlyCall = await zoom.getNextScheduledCall('monthly');
+
+  return {
+    upcomingCalls,
+    nextWeeklyCall,
+    nextMonthlyCall,
+  };
 }

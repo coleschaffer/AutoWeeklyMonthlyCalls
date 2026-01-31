@@ -38,6 +38,16 @@ const envSchema = z.object({
   // Anthropic
   ANTHROPIC_API_KEY: z.string().min(1),
 
+  // Slack (accepts both naming conventions)
+  SLACK_BOT_TOKEN: z.string().optional(),
+  SLACK_BOT_OAUTH_TOKEN: z.string().optional(), // Alternative name
+  SLACK_APP_ID: z.string().optional(),
+  SLACK_CLIENT_ID: z.string().optional(),
+  SLACK_SIGNING_SECRET: z.string().optional(),
+  SLACK_CLIENT_SECRET: z.string().optional(),
+  SLACK_WELCOME_USER_ID: z.string().optional(),
+  SLACK_USER_ID: z.string().optional(), // Alternative name
+
   // App
   PORT: z.string().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -102,6 +112,16 @@ function createDevConfig() {
 
     // Anthropic
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+
+    // Slack (check both naming conventions)
+    SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN || process.env.SLACK_BOT_OAUTH_TOKEN,
+    SLACK_BOT_OAUTH_TOKEN: process.env.SLACK_BOT_OAUTH_TOKEN,
+    SLACK_APP_ID: process.env.SLACK_APP_ID,
+    SLACK_CLIENT_ID: process.env.SLACK_CLIENT_ID,
+    SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET,
+    SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET,
+    SLACK_WELCOME_USER_ID: process.env.SLACK_WELCOME_USER_ID || process.env.SLACK_USER_ID,
+    SLACK_USER_ID: process.env.SLACK_USER_ID,
 
     // App
     PORT: process.env.PORT || '3000',

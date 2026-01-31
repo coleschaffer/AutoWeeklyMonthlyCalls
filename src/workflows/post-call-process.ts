@@ -6,6 +6,7 @@ import * as circle from '../services/circle.js';
 import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as twilio from '../services/twilio.js';
+import * as slack from '../services/slack.js';
 import { detectCallType } from '../config/schedule.js';
 import {
   findConversationStart,
@@ -142,7 +143,15 @@ export async function processRecording(
 
     // Step 9: Send follow-up notifications
     console.log('Step 9: Sending follow-up notifications...');
-    await sendFollowUpNotifications(callType, topic, summary.description, circlePost.url);
+    await sendFollowUpNotifications(
+      callType,
+      topic,
+      summary.description,
+      summary.keyTakeaways,
+      circlePost.url,
+      youtubeResult.videoUrl,
+      recording.startTime
+    );
     console.log('Follow-up notifications sent');
 
     // Step 10: Cleanup temp files
@@ -172,13 +181,16 @@ export async function processRecording(
 }
 
 /**
- * Send follow-up notifications via email and WhatsApp
+ * Send follow-up notifications via email, WhatsApp, and Slack
  */
 async function sendFollowUpNotifications(
   callType: CallType,
   topic: string,
   description: string,
-  circleUrl: string
+  keyTakeaways: string[],
+  circleUrl: string,
+  youtubeUrl: string,
+  callDate: Date
 ): Promise<void> {
   // Send email notification
   try {
@@ -194,6 +206,24 @@ async function sendFollowUpNotifications(
     console.log('WhatsApp notification sent');
   } catch (error) {
     console.error('WhatsApp notification failed:', error);
+  }
+
+  // Send Slack notification to admin (for WhatsApp copy)
+  try {
+    if (slack.isSlackConfigured()) {
+      await slack.sendRecapToAdmin(
+        callType,
+        callDate,
+        topic,
+        description,
+        keyTakeaways,
+        circleUrl,
+        youtubeUrl
+      );
+      console.log('Slack notification sent');
+    }
+  } catch (error) {
+    console.error('Slack notification failed:', error);
   }
 }
 

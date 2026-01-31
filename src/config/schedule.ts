@@ -9,13 +9,14 @@ export const WEEKLY_CALL_SCHEDULE: CallSchedule = {
   minute: 0,
 };
 
-// Monthly call: 4th Monday at 2 PM
+// Monthly call: Every 4 weeks (on Monday) at 2 PM
+// Uses a 4-week cycle from anchor date (Feb 16, 2026), NOT "4th Monday of month"
 export const MONTHLY_CALL_SCHEDULE: CallSchedule = {
   type: 'monthly',
   dayOfWeek: config.monthlyCall.day, // Monday (1)
   hour: config.monthlyCall.hour, // 2 PM
   minute: 0,
-  weekOfMonth: config.monthlyCall.week, // 4th week
+  weekOfMonth: config.monthlyCall.week, // Legacy - now uses 4-week cycle from anchor
 };
 
 // Cron expressions for reminders
@@ -24,10 +25,10 @@ export const CRON_SCHEDULES = {
   weeklyDayBefore: '0 13 * * 1', // Monday 1 PM (day before Tuesday call)
   weeklyHourBefore: '0 12 * * 2', // Tuesday 12 PM (hour before 1 PM call)
 
-  // Monthly reminders - these run daily and check if it's the right week
-  monthlyWeekBefore: '0 9 * * 1', // Every Monday 9 AM - check if next week is 4th
-  monthlyDayBefore: '0 13 * * 0', // Every Sunday 1 PM - check if tomorrow is 4th Monday
-  monthlyDayOf: '0 13 * * 1', // Every Monday 1 PM - check if today is 4th Monday
+  // Monthly reminders - these run and check if it's a monthly call week (4-week cycle)
+  monthlyWeekBefore: '0 9 * * 1', // Every Monday 9 AM - check if next week is monthly call
+  monthlyDayBefore: '0 13 * * 0', // Every Sunday 1 PM - check if tomorrow is monthly call
+  monthlyDayOf: '0 13 * * 1', // Every Monday 1 PM - check if today is monthly call
 };
 
 // Email templates

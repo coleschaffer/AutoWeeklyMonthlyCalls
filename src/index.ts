@@ -10,6 +10,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Serve static files (for copy.html) - use process.cwd() for ESM compatibility
+app.use(express.static(process.cwd() + '/public'));
+
 // Request logging
 app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
@@ -214,11 +217,332 @@ app.get('/api/status', (_req: Request, res: Response) => {
         twilio: !!env.TWILIO_ACCOUNT_SID,
         circle: !!env.CIRCLE_API_KEY,
         anthropic: !!env.ANTHROPIC_API_KEY,
+        slack: !!(env.SLACK_BOT_TOKEN && env.SLACK_SIGNING_SECRET),
       },
     },
     timestamp: new Date().toISOString(),
   });
 });
+
+// Get upcoming scheduled calls from Zoom
+app.get('/api/upcoming-calls', async (_req: Request, res: Response) => {
+  try {
+    const reminders = await import('./workflows/pre-call-reminder.js');
+    const status = await reminders.getUpcomingCallsStatus();
+
+    res.json({
+      success: true,
+      data: {
+        upcomingCalls: status.upcomingCalls.map(call => ({
+          id: call.id,
+          topic: call.topic,
+          type: call.type,
+          startTime: call.startTime.toISOString(),
+          startTimeLocal: call.startTime.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+        })),
+        nextWeeklyCall: status.nextWeeklyCall ? {
+          topic: status.nextWeeklyCall.topic,
+          startTime: status.nextWeeklyCall.startTime.toISOString(),
+          startTimeLocal: status.nextWeeklyCall.startTime.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+        } : null,
+        nextMonthlyCall: status.nextMonthlyCall ? {
+          topic: status.nextMonthlyCall.topic,
+          startTime: status.nextMonthlyCall.startTime.toISOString(),
+          startTimeLocal: status.nextMonthlyCall.startTime.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }),
+        } : null,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Failed to fetch upcoming calls:', errorMessage);
+    res.status(500).json({
+      success: false,
+      error: `Failed to fetch upcoming calls: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// ===========================================
+// Slack Endpoints
+// ===========================================
+
+// Slack event subscription endpoint (for thread replies)
+app.post('/api/slack/events', async (req: Request, res: Response) => {
+  try {
+    const payload = req.body;
+
+    // Handle URL verification challenge
+    if (payload.type === 'url_verification') {
+      console.log('Slack URL verification challenge received');
+      return res.json({ challenge: payload.challenge });
+    }
+
+    // For signature verification, we need the raw body - skip for now since express.json() already parsed
+    // In production, you'd use a custom middleware to preserve raw body
+    const slack = await import('./services/slack.js');
+
+    // Handle message events (thread replies)
+    if (payload.event?.type === 'message' && payload.event?.thread_ts) {
+      console.log('Slack thread reply received');
+
+      // Handle edit request in background
+      handleSlackThreadReply(payload.event).catch(err => {
+        console.error('Error handling thread reply:', err);
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Slack events error:', error);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Slack interactions endpoint (button clicks)
+app.post('/api/slack/interactions', express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
+  try {
+    const payload = JSON.parse(req.body.payload);
+    console.log('Slack interaction:', payload.type, payload.actions?.[0]?.action_id);
+
+    // Handle button actions
+    if (payload.type === 'block_actions') {
+      const action = payload.actions[0];
+
+      if (action.action_id === 'edit_message') {
+        // Post a message prompting user to reply in thread
+        const slack = await import('./services/slack.js');
+        await slack.postMessage(
+          payload.channel.id,
+          'Reply to this thread with your edit request (e.g., "make it shorter" or "add their experience")',
+          undefined,
+          undefined,
+          payload.message.ts
+        );
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Slack interactions error:', error);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Send recap to Slack admin
+app.post('/api/slack/send-recap', async (req: Request, res: Response) => {
+  try {
+    const slack = await import('./services/slack.js');
+
+    if (!slack.isSlackConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Slack not configured',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const { callType, topic, description, keyTakeaways, circleUrl, youtubeUrl, callDate } = req.body;
+
+    if (!callType || !topic || !description || !circleUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const result = await slack.sendRecapToAdmin(
+      callType,
+      callDate ? new Date(callDate) : new Date(),
+      topic,
+      description,
+      keyTakeaways || [],
+      circleUrl,
+      youtubeUrl || circleUrl
+    );
+
+    res.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Send recap error:', errorMessage);
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// List Slack users
+app.get('/api/slack/users', async (_req: Request, res: Response) => {
+  try {
+    const slack = await import('./services/slack.js');
+
+    if (!slack.isSlackConfigured()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Slack not configured',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const users = await slack.listUsers();
+
+    res.json({
+      success: true,
+      data: users,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('List users error:', errorMessage);
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Helper function to handle thread replies (edit requests)
+async function handleSlackThreadReply(event: {
+  channel: string;
+  thread_ts: string;
+  text: string;
+  user: string;
+  ts: string;
+}) {
+  try {
+    const slack = await import('./services/slack.js');
+    const claude = await import('./services/claude.js');
+
+    // Get thread history to find the original message
+    const threadMessages = await slack.getThreadReplies(event.channel, event.thread_ts);
+    const originalMessage = threadMessages[0];
+
+    if (!originalMessage) {
+      console.error('Could not find original message');
+      return;
+    }
+
+    // Get the original message with metadata
+    const fullMessage = await slack.getMessage(event.channel, event.thread_ts);
+    const metadata = (fullMessage as Record<string, unknown>)?.metadata as { event_payload?: Record<string, unknown> } | undefined;
+
+    if (!metadata?.event_payload) {
+      // No metadata, can't do smart edit - just acknowledge
+      await slack.postMessage(
+        event.channel,
+        "I couldn't find the original context. Please try again.",
+        undefined,
+        undefined,
+        event.thread_ts
+      );
+      return;
+    }
+
+    // Use Claude to edit the message
+    const editRequest = event.text;
+    const originalContent = metadata.event_payload;
+
+    const editPrompt = `You are editing a WhatsApp message for CA Pro training.
+
+Original message context:
+- Topic: ${originalContent.topic}
+- Description: ${originalContent.description}
+- Circle URL: ${originalContent.circleUrl}
+
+User's edit request: "${editRequest}"
+
+Generate ONLY the new WhatsApp message text. Keep it concise and mobile-friendly. Include emojis. Format:
+🎬 New CA Pro [Weekly/Monthly] Training Available!
+
+📚 [Topic]
+
+[Description - keep it 1-2 sentences]
+
+🔗 Watch now: [URL]`;
+
+    const response = await claude.generateCallSummary(editPrompt, 'Edit Request');
+    const editedMessage = response.description || 'Could not generate edited message';
+
+    // Build the copy URL for the edited message
+    const encodedMessage = encodeURIComponent(editedMessage);
+    const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+      : 'https://autoweeklymonthlycalls-production.up.railway.app';
+    const copyUrl = `${baseUrl}/copy.html?text=${encodedMessage}`;
+
+    // Post the edited version in thread
+    await slack.postMessage(
+      event.channel,
+      editedMessage,
+      [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '*Edited version:*',
+          },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: editedMessage,
+          },
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: {
+                type: 'plain_text',
+                text: '📋 Copy This Version',
+                emoji: true,
+              },
+              url: copyUrl,
+              action_id: 'copy_edited',
+            },
+          ],
+        },
+      ],
+      undefined,
+      event.thread_ts
+    );
+  } catch (error) {
+    console.error('Error in handleSlackThreadReply:', error);
+  }
+}
 
 // ===========================================
 // Error Handler
@@ -300,6 +624,13 @@ app.listen(PORT, () => {
   console.log(`  POST /api/process-call?meetingId=XXX - Manual trigger`);
   console.log(`  POST /api/reminders/:type/:timing - Manual reminder triggers`);
   console.log(`  GET  /api/status - System status`);
+  console.log(`  GET  /api/upcoming-calls - Upcoming Zoom calls`);
+  console.log('');
+  console.log('Slack:');
+  console.log(`  POST /api/slack/events - Slack event subscription`);
+  console.log(`  POST /api/slack/interactions - Button interactions`);
+  console.log(`  POST /api/slack/send-recap - Send recap to admin`);
+  console.log(`  GET  /api/slack/users - List Slack users`);
   console.log('===========================================');
 
   // Setup cron jobs after server starts (non-blocking)

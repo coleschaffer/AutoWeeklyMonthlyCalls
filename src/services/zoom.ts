@@ -228,6 +228,133 @@ export async function getChatContent(chatUrl: string): Promise<string> {
 }
 
 /**
+ * Scheduled meeting from Zoom
+ */
+export interface ScheduledMeeting {
+  id: string;
+  topic: string;
+  startTime: Date;
+  duration: number;
+  type: 'weekly' | 'monthly';
+}
+
+/**
+ * List upcoming scheduled meetings
+ * Fetches meetings from Zoom calendar to determine actual call schedule
+ */
+export async function getUpcomingMeetings(daysAhead: number = 14): Promise<ScheduledMeeting[]> {
+  const data = await zoomRequest<{
+    meetings: Array<{
+      id: number;
+      uuid: string;
+      topic: string;
+      start_time: string;
+      duration: number;
+      type: number;
+    }>;
+  }>('/users/me/meetings?type=upcoming&page_size=30');
+
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+
+  return data.meetings
+    .filter(meeting => {
+      const startTime = new Date(meeting.start_time);
+      // Filter to CA Pro calls only and within date range
+      const isCaProCall = meeting.topic.toLowerCase().includes('ca pro') ||
+                          meeting.topic.toLowerCase().includes('copy accelerator');
+      return isCaProCall && startTime >= now && startTime <= cutoffDate;
+    })
+    .map(meeting => ({
+      id: meeting.id.toString(),
+      topic: meeting.topic,
+      startTime: new Date(meeting.start_time),
+      duration: meeting.duration,
+      type: detectMeetingType(meeting.topic),
+    }))
+    .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+}
+
+/**
+ * Get the next scheduled meeting of a specific type
+ */
+export async function getNextScheduledCall(
+  callType: 'weekly' | 'monthly'
+): Promise<ScheduledMeeting | null> {
+  const meetings = await getUpcomingMeetings(30);
+  return meetings.find(m => m.type === callType) || null;
+}
+
+/**
+ * Check if there's a scheduled call on a specific date
+ */
+export async function hasScheduledCallOnDate(
+  date: Date,
+  callType?: 'weekly' | 'monthly'
+): Promise<boolean> {
+  const meetings = await getUpcomingMeetings(30);
+
+  return meetings.some(meeting => {
+    const meetingDate = meeting.startTime;
+    const sameDay = meetingDate.getFullYear() === date.getFullYear() &&
+                    meetingDate.getMonth() === date.getMonth() &&
+                    meetingDate.getDate() === date.getDate();
+
+    if (callType) {
+      return sameDay && meeting.type === callType;
+    }
+    return sameDay;
+  });
+}
+
+/**
+ * Get scheduled call for tomorrow (if any)
+ */
+export async function getTomorrowsCall(): Promise<ScheduledMeeting | null> {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const meetings = await getUpcomingMeetings(7);
+
+  return meetings.find(meeting => {
+    const meetingDate = meeting.startTime;
+    return meetingDate.getFullYear() === tomorrow.getFullYear() &&
+           meetingDate.getMonth() === tomorrow.getMonth() &&
+           meetingDate.getDate() === tomorrow.getDate();
+  }) || null;
+}
+
+/**
+ * Get scheduled call for next week (Monday)
+ */
+export async function getNextWeeksCall(): Promise<ScheduledMeeting | null> {
+  const now = new Date();
+  const daysUntilNextMonday = (8 - now.getDay()) % 7 || 7;
+  const nextMonday = new Date(now);
+  nextMonday.setDate(now.getDate() + daysUntilNextMonday);
+
+  const meetings = await getUpcomingMeetings(14);
+
+  return meetings.find(meeting => {
+    const meetingDate = meeting.startTime;
+    return meetingDate.getFullYear() === nextMonday.getFullYear() &&
+           meetingDate.getMonth() === nextMonday.getMonth() &&
+           meetingDate.getDate() === nextMonday.getDate();
+  }) || null;
+}
+
+/**
+ * Detect meeting type from topic
+ */
+function detectMeetingType(topic: string): 'weekly' | 'monthly' {
+  const lowerTopic = topic.toLowerCase();
+  if (lowerTopic.includes('monthly') || lowerTopic.includes('business owner')) {
+    return 'monthly';
+  }
+  return 'weekly';
+}
+
+/**
  * Extract meeting topic without "CA Pro" prefix for cleaner titles
  */
 export function extractTopicFromMeeting(rawTopic: string): string {
