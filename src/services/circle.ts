@@ -58,28 +58,66 @@ export async function createCallPost(metadata: CallPostMetadata): Promise<Circle
 
 /**
  * Build the post body content
+ *
+ * Structure:
+ * - YouTube embed
+ * - Description (2-3 sentences)
+ * - Summary (6-8 bullets with **Bold Heading**: format)
+ * - Key Takeaways (4-6 bullets)
+ * - Resources section
  */
 function buildPostBody(metadata: CallPostMetadata): string {
   // YouTube embed (Circle supports oEmbed)
   const videoEmbed = `https://www.youtube.com/watch?v=${metadata.youtubeId}`;
 
-  const body = `
-${videoEmbed}
+  // Separate summary bullets (have **Bold**:) from key takeaways (plain text)
+  const summaryBullets: string[] = [];
+  const keyTakeaways: string[] = [];
 
-${metadata.description}
+  for (const bullet of metadata.bullets) {
+    if (bullet.includes('**') && bullet.includes(':')) {
+      // This is a summary bullet with bold heading
+      summaryBullets.push(bullet);
+    } else {
+      // This is a key takeaway
+      keyTakeaways.push(bullet);
+    }
+  }
 
-**Key Takeaways:**
-${metadata.bullets.map(b => `• ${b}`).join('\n')}
+  // Build the body
+  let body = `${videoEmbed}
+
+${metadata.description}`;
+
+  // Add Summary section if we have summary bullets
+  if (summaryBullets.length > 0) {
+    body += `
+
+**Summary**
+
+${summaryBullets.map(b => `${b}`).join('\n\n')}`;
+  }
+
+  // Add Key Takeaways section if we have takeaways
+  if (keyTakeaways.length > 0) {
+    body += `
+
+**Key Takeaways**
+
+${keyTakeaways.map(b => `• ${b}`).join('\n')}`;
+  }
+
+  // Add Resources section
+  body += `
 
 ---
 
-**Resources:**
+**Resources**
 - [Video](${metadata.driveVideoLink})
 - [Call Transcript](${metadata.driveTranscriptLink})
-- [Chat Transcript](${metadata.driveChatLink})
-  `.trim();
+- [Chat Transcript](${metadata.driveChatLink})`;
 
-  return body;
+  return body.trim();
 }
 
 /**

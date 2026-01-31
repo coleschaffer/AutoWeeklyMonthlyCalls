@@ -7,44 +7,91 @@ const anthropic = new Anthropic({
 });
 
 /**
- * Generate a summary of a call transcript
+ * Generate a summary of a call transcript using the structured prompt
  */
 export async function generateCallSummary(
   transcript: string,
-  topic: string
+  topic: string,
+  speakerName: string = 'Stefan'
 ): Promise<CallSummary> {
+  const prompt = `# Call Summary Generator
+
+You are generating a structured summary of a coaching/training call from a transcript. Follow these exact specifications:
+
+## Output Format
+
+### Description
+Write 2-3 sentences following this formula:
+- Sentence 1: "[Speaker name] leads a [session type] focused on [primary topic]."
+- Sentence 2-3: "The call features [main activities/content covered], with [Speaker name] [specific actions/demonstrations]."
+
+Session types to choose from: training session, funnel breakdown session, open Q&A session, feedback session, strategy session, workshop, masterclass
+
+### Summary
+Write 6-8 bullet points covering distinct topics from the call.
+
+Format each bullet as:
+**[2-4 Word Heading]**: [2-4 sentences describing what was covered, with specific details]
+
+Heading style rules:
+- Use noun phrases, not sentences ("Ad Structure Analysis" not "Stefan Analyzed Ad Structure")
+- Categories: [Topic] + [Content Type], [Strategy/Concept], [Process/Technique], or [Plural Noun]
+- Examples: "Funnel Diagnostics", "Rewrite Process", "Market Awareness Strategy", "Optimization Notes"
+
+Content rules for each bullet:
+- Include concrete details: product names, price points, percentages, tool names
+- Describe actions taken, not just topics discussed
+- End with the insight or why it matters
+- Follow rough chronological order of the call
+
+### Key Takeaways
+Write 4-6 actionable insights or lessons from the call.
+
+Format as a bulleted list. Each takeaway should:
+- Be a standalone insight someone could apply
+- Capture strategic thinking, not just facts
+- Be specific enough to be useful, general enough to transfer
+
+---
+
+## Tone & Style Rules
+
+1. **Third-person only**: "${speakerName} shared" not "I shared"
+2. **Active voice**: "${speakerName} broke down" not "was broken down"
+3. **Observational, not promotional**: Describe what happened without evaluating quality
+4. **Specific over vague**: Use exact numbers, names, and details from the transcript
+5. **Industry jargon acceptable**: VSL, AOV, advertorial, mechanism, funnel, etc.
+6. **No timestamps**: Summarize topics, don't reference time codes
+7. **No filler**: Every sentence must carry information
+
+---
+
+## Process
+
+1. Read the full transcript
+2. Identify the speaker leading the call (likely ${speakerName})
+3. Identify 6-8 distinct topics/segments discussed
+4. Extract specific details, examples, and numbers mentioned
+5. Determine the 4-6 most transferable lessons
+6. Write the summary following all formatting rules above
+
+---
+
+## Transcript
+
+${transcript}
+
+---
+
+Now generate the Description, Summary (6-8 bullets), and Key Takeaways (4-6 bullets) following the format above. Do NOT include the Resources section - that will be added separately.`;
+
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
+    max_tokens: 2048,
     messages: [
       {
         role: 'user',
-        content: `You are summarizing a CA Pro training call about "${topic}".
-
-This is a training call for copywriters and business owners about advertising, copywriting, and business strategy.
-
-Transcript:
-${transcript}
-
-Provide:
-1. A brief 2-3 sentence description of what was covered in this call. Focus on the main topics and insights shared.
-2. 5-7 bullet points summarizing the key takeaways that attendees should remember.
-
-Format your response EXACTLY as follows (use this exact format with these exact labels):
-
-DESCRIPTION:
-[Your 2-3 sentence description here]
-
-KEY TAKEAWAYS:
-• [Bullet point 1]
-• [Bullet point 2]
-• [Bullet point 3]
-• [Bullet point 4]
-• [Bullet point 5]
-• [Bullet point 6 - optional]
-• [Bullet point 7 - optional]
-
-Important: Make the takeaways actionable and specific, not generic. Focus on the unique insights from this particular call.`,
+        content: prompt,
       },
     ],
   });
@@ -59,42 +106,84 @@ Important: Make the takeaways actionable and specific, not generic. Focus on the
  * Parse the Claude response into structured summary
  */
 function parseSummaryResponse(responseText: string): CallSummary {
-  // Extract description
+  // Extract description (text between ### Description and ### Summary)
   const descriptionMatch = responseText.match(
-    /DESCRIPTION:\s*\n?([\s\S]*?)(?=KEY TAKEAWAYS:|$)/i
+    /###?\s*Description\s*\n+([\s\S]*?)(?=###?\s*Summary|$)/i
   );
-  const description = descriptionMatch
+  let description = descriptionMatch
     ? descriptionMatch[1].trim()
-    : 'Training call covering copywriting and business strategies.';
+    : '';
 
-  // Extract bullet points
-  const takeawaysMatch = responseText.match(/KEY TAKEAWAYS:\s*\n?([\s\S]*?)$/i);
+  // If no markdown headers, try to get first paragraph
+  if (!description) {
+    const firstParagraph = responseText.split('\n\n')[0];
+    if (firstParagraph && !firstParagraph.startsWith('**') && !firstParagraph.startsWith('•') && !firstParagraph.startsWith('-')) {
+      description = firstParagraph.trim();
+    }
+  }
+
+  // Fallback description
+  if (!description) {
+    description = 'This training call covered strategies and insights for copywriting and business growth.';
+  }
+
+  // Extract summary bullets (between ### Summary and ### Key Takeaways)
+  const summaryMatch = responseText.match(
+    /###?\s*Summary\s*\n+([\s\S]*?)(?=###?\s*Key\s*Takeaways|$)/i
+  );
+
+  let summaryBullets: string[] = [];
+  if (summaryMatch) {
+    const summaryText = summaryMatch[1];
+    // Match bullets that start with ** (bold heading format)
+    const bulletMatches = summaryText.match(/\*\*[^*]+\*\*:?\s*[^\n*]+(?:\n(?!\*\*|\n)[^\n]+)*/g);
+    if (bulletMatches) {
+      summaryBullets = bulletMatches.map(b => b.trim());
+    }
+  }
+
+  // Extract key takeaways (after ### Key Takeaways)
+  const takeawaysMatch = responseText.match(
+    /###?\s*Key\s*Takeaways\s*\n+([\s\S]*?)(?=###?\s*Resources|---|\n\n\n|$)/i
+  );
+
   let keyTakeaways: string[] = [];
-
   if (takeawaysMatch) {
-    const bulletText = takeawaysMatch[1];
-    // Match bullet points (•, -, *, or numbered)
-    const bullets = bulletText.match(/[•\-\*]\s*(.+?)(?=\n[•\-\*]|\n\n|$)/g);
-
+    const takeawaysText = takeawaysMatch[1];
+    // Match bullet points (-, *, •, or numbered)
+    const bullets = takeawaysText.match(/(?:^|\n)\s*(?:[-•*]|\d+\.)\s*(.+?)(?=\n\s*(?:[-•*]|\d+\.)|\n\n|$)/g);
     if (bullets) {
       keyTakeaways = bullets
-        .map(b => b.replace(/^[•\-\*]\s*/, '').trim())
+        .map(b => b.replace(/^\s*(?:[-•*]|\d+\.)\s*/, '').trim())
         .filter(b => b.length > 0);
     }
   }
 
+  // Combine summary bullets and key takeaways for the output
+  // The description goes in the description field
+  // Everything else goes in keyTakeaways (which will be formatted in Circle post)
+  const allBullets = [...summaryBullets, ...keyTakeaways];
+
   // Fallback if parsing failed
-  if (keyTakeaways.length === 0) {
-    keyTakeaways = [
-      'Key strategies and insights were shared for improving copywriting effectiveness.',
-      'Practical tips for implementing these strategies in your business.',
-      'Watch the full recording for detailed examples and explanations.',
-    ];
+  if (allBullets.length === 0) {
+    // Try to extract any bullet-like content from the response
+    const anyBullets = responseText.match(/(?:^|\n)\s*(?:[-•*]|\*\*).+/g);
+    if (anyBullets) {
+      allBullets.push(...anyBullets.map(b => b.trim()).slice(0, 10));
+    }
+  }
+
+  if (allBullets.length === 0) {
+    allBullets.push(
+      '**Training Content**: Key strategies and insights were shared during this session.',
+      '**Practical Application**: Actionable tips for implementation were discussed.',
+      'Watch the full recording for detailed examples and explanations.'
+    );
   }
 
   return {
     description,
-    keyTakeaways,
+    keyTakeaways: allBullets,
   };
 }
 
