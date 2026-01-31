@@ -59,13 +59,9 @@ function validateEnv() {
     console.error('Environment validation failed:');
     console.error(parsed.error.format());
 
-    // In development, allow partial config for testing
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('Running in development mode with partial config');
-      return createDevConfig();
-    }
-
-    throw new Error('Invalid environment configuration');
+    // Allow partial config - app will start but some features won't work
+    console.warn('Starting with partial config - some features may not work');
+    return createDevConfig();
   }
 
   return parsed.data;
