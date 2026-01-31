@@ -146,18 +146,6 @@ export interface EmailSendResult {
   error?: string;
 }
 
-// ---- Twilio Types ----
-export interface WhatsAppMessageData {
-  to: string;
-  message: string;
-}
-
-export interface WhatsAppSendResult {
-  success: boolean;
-  messageSid?: string;
-  error?: string;
-}
-
 // ---- Claude AI Types ----
 export interface CallSummary {
   description: string;
@@ -168,7 +156,6 @@ export interface CallSummary {
 export interface ReminderTemplate {
   emailSubject: string;
   emailBody: string;
-  whatsappMessage: string;
 }
 
 export interface CallPostMetadata {

@@ -1,7 +1,6 @@
 import * as activeCampaign from '../services/activecampaign.js';
-import * as twilio from '../services/twilio.js';
 import * as zoom from '../services/zoom.js';
-import { EMAIL_TEMPLATES, WHATSAPP_TEMPLATES } from '../config/schedule.js';
+import { EMAIL_TEMPLATES } from '../config/schedule.js';
 import { getCurrentTime } from '../utils/date-helpers.js';
 import { addDays } from 'date-fns';
 import type { CallType } from '../types/index.js';
@@ -13,7 +12,6 @@ interface ReminderResult {
   callType: CallType;
   reminderType: ReminderType;
   emailSent: boolean;
-  whatsappSent: boolean;
   scheduledCall?: {
     topic: string;
     startTime: Date;
@@ -35,7 +33,6 @@ export async function sendWeeklyDayBeforeReminder(): Promise<ReminderResult> {
         callType: 'weekly',
         reminderType: 'dayBefore',
         emailSent: false,
-        whatsappSent: false,
         errors: ['No weekly call scheduled for tomorrow in Zoom'],
       };
     }
@@ -81,7 +78,6 @@ export async function sendWeeklyHourBeforeReminder(): Promise<ReminderResult> {
         callType: 'weekly',
         reminderType: 'hourBefore',
         emailSent: false,
-        whatsappSent: false,
         errors: ['No weekly call scheduled for today in Zoom'],
       };
     }
@@ -124,7 +120,6 @@ export async function sendMonthlyWeekBeforeReminder(): Promise<ReminderResult> {
         callType: 'monthly',
         reminderType: 'weekBefore',
         emailSent: false,
-        whatsappSent: false,
         errors: ['No monthly call scheduled within next week in Zoom'],
       };
     }
@@ -145,7 +140,6 @@ export async function sendMonthlyWeekBeforeReminder(): Promise<ReminderResult> {
       callType: 'monthly',
       reminderType: 'weekBefore',
       emailSent: false,
-      whatsappSent: false,
       errors: [`Zoom API error: ${errorMessage}`],
     };
   }
@@ -165,7 +159,6 @@ export async function sendMonthlyDayBeforeReminder(): Promise<ReminderResult> {
         callType: 'monthly',
         reminderType: 'dayBefore',
         emailSent: false,
-        whatsappSent: false,
         errors: ['No monthly call scheduled for tomorrow in Zoom'],
       };
     }
@@ -186,7 +179,6 @@ export async function sendMonthlyDayBeforeReminder(): Promise<ReminderResult> {
       callType: 'monthly',
       reminderType: 'dayBefore',
       emailSent: false,
-      whatsappSent: false,
       errors: [`Zoom API error: ${errorMessage}`],
     };
   }
@@ -215,7 +207,6 @@ export async function sendMonthlyDayOfReminder(): Promise<ReminderResult> {
         callType: 'monthly',
         reminderType: 'dayOf',
         emailSent: false,
-        whatsappSent: false,
         errors: ['No monthly call scheduled for today in Zoom'],
       };
     }
@@ -236,7 +227,6 @@ export async function sendMonthlyDayOfReminder(): Promise<ReminderResult> {
       callType: 'monthly',
       reminderType: 'dayOf',
       emailSent: false,
-      whatsappSent: false,
       errors: [`Zoom API error: ${errorMessage}`],
     };
   }
@@ -251,15 +241,10 @@ async function sendReminder(
 ): Promise<ReminderResult> {
   const errors: string[] = [];
   let emailSent = false;
-  let whatsappSent = false;
 
-  // Get templates
+  // Get email template
   const emailTemplate =
     EMAIL_TEMPLATES[callType][reminderType as keyof (typeof EMAIL_TEMPLATES)[typeof callType]];
-  const whatsappMessage =
-    WHATSAPP_TEMPLATES[callType][
-      reminderType as keyof (typeof WHATSAPP_TEMPLATES)[typeof callType]
-    ];
 
   // Send email
   if (emailTemplate) {
@@ -278,34 +263,11 @@ async function sendReminder(
     }
   }
 
-  // Send WhatsApp
-  if (whatsappMessage) {
-    console.log(`Sending ${callType} ${reminderType} WhatsApp reminder...`);
-    const whatsappResults = await twilio.sendReminder(callType, reminderType);
-
-    const successCount = whatsappResults.filter(r => r.success).length;
-    const failCount = whatsappResults.filter(r => !r.success).length;
-
-    if (successCount > 0) {
-      whatsappSent = true;
-      console.log(`WhatsApp sent to ${successCount} recipients`);
-    }
-
-    if (failCount > 0) {
-      const failedErrors = whatsappResults
-        .filter(r => !r.success)
-        .map(r => r.error)
-        .join(', ');
-      errors.push(`WhatsApp failed for ${failCount} recipients: ${failedErrors}`);
-    }
-  }
-
   return {
     success: errors.length === 0,
     callType,
     reminderType,
     emailSent,
-    whatsappSent,
     errors,
   };
 }

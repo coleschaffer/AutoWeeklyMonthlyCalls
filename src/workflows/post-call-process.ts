@@ -5,7 +5,6 @@ import * as googleDrive from '../services/google-drive.js';
 import * as circle from '../services/circle.js';
 import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
-import * as twilio from '../services/twilio.js';
 import * as slack from '../services/slack.js';
 import { detectCallType } from '../config/schedule.js';
 import {
@@ -181,7 +180,7 @@ export async function processRecording(
 }
 
 /**
- * Send follow-up notifications via email, WhatsApp, and Slack
+ * Send follow-up notifications via email and Slack
  */
 async function sendFollowUpNotifications(
   callType: CallType,
@@ -198,14 +197,6 @@ async function sendFollowUpNotifications(
     console.log('Email notification sent');
   } catch (error) {
     console.error('Email notification failed:', error);
-  }
-
-  // Send WhatsApp notification
-  try {
-    await twilio.sendRecordingNotification(callType, topic, circleUrl);
-    console.log('WhatsApp notification sent');
-  } catch (error) {
-    console.error('WhatsApp notification failed:', error);
   }
 
   // Send Slack notification to admin (for WhatsApp copy)

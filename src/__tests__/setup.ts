@@ -25,12 +25,6 @@ process.env.ACTIVECAMPAIGN_API_URL = 'https://test.api-us1.com';
 process.env.ACTIVECAMPAIGN_API_KEY = 'test_ac_key';
 process.env.ACTIVECAMPAIGN_LIST_ID = '1';
 
-// Twilio
-process.env.TWILIO_ACCOUNT_SID = 'test_twilio_sid';
-process.env.TWILIO_AUTH_TOKEN = 'test_twilio_token';
-process.env.TWILIO_WHATSAPP_NUMBER = 'whatsapp:+1234567890';
-process.env.WHATSAPP_GROUP_NUMBERS = '+1111111111,+2222222222';
-
 // Circle
 process.env.CIRCLE_API_KEY = 'test_circle_key';
 process.env.CIRCLE_COMMUNITY_ID = '1';

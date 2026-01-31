@@ -24,12 +24,6 @@ const envSchema = z.object({
   ACTIVECAMPAIGN_API_KEY: z.string().min(1),
   ACTIVECAMPAIGN_LIST_ID: z.string().min(1),
 
-  // Twilio
-  TWILIO_ACCOUNT_SID: z.string().min(1),
-  TWILIO_AUTH_TOKEN: z.string().min(1),
-  TWILIO_WHATSAPP_NUMBER: z.string().min(1),
-  WHATSAPP_GROUP_NUMBERS: z.string().min(1),
-
   // Circle
   CIRCLE_API_KEY: z.string().min(1),
   CIRCLE_COMMUNITY_ID: z.string().min(1),
@@ -99,12 +93,6 @@ function createDevConfig() {
     ACTIVECAMPAIGN_API_KEY: process.env.ACTIVECAMPAIGN_API_KEY || '',
     ACTIVECAMPAIGN_LIST_ID: process.env.ACTIVECAMPAIGN_LIST_ID || '',
 
-    // Twilio
-    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || '',
-    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || '',
-    TWILIO_WHATSAPP_NUMBER: process.env.TWILIO_WHATSAPP_NUMBER || '',
-    WHATSAPP_GROUP_NUMBERS: process.env.WHATSAPP_GROUP_NUMBERS || '',
-
     // Circle
     CIRCLE_API_KEY: process.env.CIRCLE_API_KEY || '',
     CIRCLE_COMMUNITY_ID: process.env.CIRCLE_COMMUNITY_ID || '',
@@ -156,8 +144,6 @@ export const config = {
     day: parseInt(env.MONTHLY_CALL_DAY, 10),
     hour: parseInt(env.MONTHLY_CALL_HOUR, 10),
   },
-
-  whatsappNumbers: env.WHATSAPP_GROUP_NUMBERS.split(',').map(n => n.trim()),
 
   circleSpaceId: parseInt(env.CIRCLE_SPACE_ID, 10),
   circleCommunityId: parseInt(env.CIRCLE_COMMUNITY_ID, 10),

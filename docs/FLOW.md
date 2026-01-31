@@ -16,7 +16,7 @@ This document describes the complete automation flow for CA Pro weekly and month
 
 ## Pre-Call Reminders
 
-Reminders are sent automatically via cron jobs to both email (ActiveCampaign) and WhatsApp (Twilio).
+Reminders are sent automatically via cron jobs to email (ActiveCampaign).
 
 **Important:** Reminders now check **Zoom's actual schedule** before sending. If a call is cancelled or not scheduled in Zoom, no reminder will be sent. This prevents errors during holidays (e.g., Christmas week) or schedule changes.
 
@@ -24,8 +24,8 @@ Reminders are sent automatically via cron jobs to both email (ActiveCampaign) an
 
 | When | Cron | What Happens |
 |------|------|--------------|
-| **Monday 1 PM** | `0 13 * * 1` | Check Zoom → If call tomorrow, send Email + WhatsApp |
-| **Tuesday 12 PM** | `0 12 * * 2` | Check Zoom → If call today, send Email + WhatsApp |
+| **Monday 1 PM** | `0 13 * * 1` | Check Zoom → If call tomorrow, send Email |
+| **Tuesday 12 PM** | `0 12 * * 2` | Check Zoom → If call today, send Email |
 
 ### Monthly Calls (Every 4 weeks on Monday at 2 PM ET)
 
@@ -156,9 +156,9 @@ Zoom Recording Completes
 │  • Subject: "New Recording: [Topic]"                            │
 │  • Body: Summary + link to Circle post                          │
 │                                                                 │
-│  WhatsApp (Twilio):                                             │
-│  • "🎬 New CA Pro [Weekly/Monthly] Training Available!"         │
-│  • Topic + Circle link                                          │
+│  Slack (Admin Notification):                                    │
+│  • Send recap to admin with "Copy for WhatsApp" button          │
+│  • Admin can copy pre-formatted message and paste to WhatsApp   │
 └─────────────────────────────────────────────────────────────────┘
          │
          ▼
@@ -340,7 +340,7 @@ Returns which services are configured:
       "zoom": true,
       "google": true,
       "activeCampaign": true,
-      "twilio": true,
+      "slack": true,
       "circle": true,
       "anthropic": true
     }
@@ -379,11 +379,10 @@ GET /health
 | `ACTIVECAMPAIGN_API_URL` | API URL (https://xxx.api-us1.com) |
 | `ACTIVECAMPAIGN_API_KEY` | API Key |
 | `ACTIVECAMPAIGN_LIST_ID` | List ID for CA Pro members |
-| **Twilio** | |
-| `TWILIO_ACCOUNT_SID` | Account SID |
-| `TWILIO_AUTH_TOKEN` | Auth Token |
-| `TWILIO_WHATSAPP_NUMBER` | WhatsApp sender number |
-| `WHATSAPP_GROUP_NUMBERS` | Comma-separated recipient numbers |
+| **Slack** (Optional) | |
+| `SLACK_BOT_TOKEN` | Bot OAuth Token (xoxb-...) |
+| `SLACK_SIGNING_SECRET` | Signing secret for verifying requests |
+| `SLACK_WELCOME_USER_ID` | Admin user ID to send recaps to |
 | **Circle** | |
 | `CIRCLE_API_KEY` | API Key |
 | `CIRCLE_COMMUNITY_ID` | Community ID |

@@ -114,19 +114,6 @@ The CA Pro Team
   },
 };
 
-// WhatsApp templates
-export const WHATSAPP_TEMPLATES = {
-  weekly: {
-    dayBefore: `Reminder: CA Pro Weekly Training is tomorrow (Tuesday) at 1 PM ET! See you on Zoom.`,
-    hourBefore: `Starting in 1 hour! CA Pro Weekly Training at 1 PM ET. Join us on Zoom!`,
-  },
-  monthly: {
-    weekBefore: `Save the date: CA Pro Monthly Training is next Monday at 2 PM ET!`,
-    dayBefore: `Reminder: CA Pro Monthly Training is tomorrow (Monday) at 2 PM ET! See you on Zoom.`,
-    dayOf: `Today! CA Pro Monthly Training at 2 PM ET. Join us on Zoom!`,
-  },
-};
-
 // Determine call type from meeting topic
 export function detectCallType(topic: string): CallType {
   const lowerTopic = topic.toLowerCase();

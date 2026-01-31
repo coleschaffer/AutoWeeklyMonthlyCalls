@@ -214,7 +214,6 @@ app.get('/api/status', (_req: Request, res: Response) => {
         zoom: !!env.ZOOM_WEBHOOK_SECRET,
         google: !!env.GOOGLE_REFRESH_TOKEN,
         activeCampaign: !!env.ACTIVECAMPAIGN_API_KEY,
-        twilio: !!env.TWILIO_ACCOUNT_SID,
         circle: !!env.CIRCLE_API_KEY,
         anthropic: !!env.ANTHROPIC_API_KEY,
         slack: !!(env.SLACK_BOT_TOKEN && env.SLACK_SIGNING_SECRET),

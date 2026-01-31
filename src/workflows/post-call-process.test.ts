@@ -35,8 +35,9 @@ vi.mock('../services/activecampaign.js', () => ({
   sendRecordingNotification: vi.fn(),
 }));
 
-vi.mock('../services/twilio.js', () => ({
-  sendRecordingNotification: vi.fn(),
+vi.mock('../services/slack.js', () => ({
+  isSlackConfigured: vi.fn(() => false),
+  sendRecapToAdmin: vi.fn(),
 }));
 
 vi.mock('../config/schedule.js', () => ({
