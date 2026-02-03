@@ -36,9 +36,18 @@ export async function handleEmailApproval(
       subject = `New Recording: ${topic}`;
     }
 
+    // Determine the correct list ID based on call type
+    const listId = pending.callType === 'monthly'
+      ? config.activeCampaignMonthlyListId
+      : config.activeCampaignWeeklyListId;
+
+    if (!listId || listId === 0) {
+      throw new Error(`No ActiveCampaign list configured for ${pending.callType} calls. Set AC_TM_LIST_ID (weekly) or AC_BO_LIST_ID (monthly).`);
+    }
+
     // Send via ActiveCampaign
     const result = await activeCampaign.sendCampaign({
-      listId: config.activeCampaignListId,
+      listId,
       subject,
       body: pending.message,
     });

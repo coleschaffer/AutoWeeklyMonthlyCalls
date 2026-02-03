@@ -264,17 +264,14 @@ async function determineCallType(): Promise<'weekly' | 'monthly'> {
 }
 
 /**
- * Format call time for display
+ * Format call time for display (just the time, e.g., "1:00 PM")
  */
 function formatCallTime(date: Date): string {
   return date.toLocaleString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
     timeZone: 'America/New_York',
-  }) + ' EST';
+  });
 }
 
 /**

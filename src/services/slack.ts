@@ -651,7 +651,7 @@ export function buildWhatsAppReminderBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: message,
+        text: '```' + message + '```',
       },
     },
     {
@@ -693,6 +693,9 @@ export function buildEmailReminderBlocks(
 ): unknown[] {
   const timingLabel = timing === 'dayBefore' ? 'Day Before' : 'Day Of';
 
+  // Truncate for code block display if needed
+  const displayMessage = message.length > 2800 ? message.substring(0, 2800) + '...' : message;
+
   return [
     {
       type: 'section',
@@ -705,7 +708,7 @@ export function buildEmailReminderBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+        text: '```' + displayMessage + '```',
       },
     },
     {
@@ -750,6 +753,9 @@ export function buildWhatsAppRecapBlocks(
     : 'https://autoweeklymonthlycalls-production.up.railway.app';
   const copyUrl = `${baseUrl}/copy.html?text=${encodedMessage}`;
 
+  // Truncate for code block display if needed
+  const displayMessage = message.length > 2800 ? message.substring(0, 2800) + '...' : message;
+
   return [
     {
       type: 'section',
@@ -762,7 +768,7 @@ export function buildWhatsAppRecapBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+        text: '```' + displayMessage + '```',
       },
     },
     {
@@ -800,6 +806,9 @@ export function buildEmailRecapBlocks(
   message: string,
   pendingId: string
 ): unknown[] {
+  // Truncate for code block display if needed
+  const displayMessage = message.length > 2800 ? message.substring(0, 2800) + '...' : message;
+
   return [
     {
       type: 'section',
@@ -812,7 +821,7 @@ export function buildEmailRecapBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+        text: '```' + displayMessage + '```',
       },
     },
     {
@@ -852,8 +861,8 @@ export function buildCircleRecapBlocks(
   pendingId: string,
   topic: string
 ): unknown[] {
-  // Truncate for display if needed (Slack block text limit is 3000 chars)
-  const displayMessage = message.length > 2900 ? message.substring(0, 2900) + '...\n\n_(Message truncated for display)_' : message;
+  // Truncate for code block display if needed (Slack block text limit is 3000 chars)
+  const displayMessage = message.length > 2800 ? message.substring(0, 2800) + '...' : message;
 
   return [
     {
@@ -867,7 +876,7 @@ export function buildCircleRecapBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: displayMessage,
+        text: '```' + displayMessage + '```',
       },
     },
     {

@@ -3,19 +3,35 @@ import { env } from '../config/env.js';
 import { config } from '../config/env.js';
 import type { EmailCampaignData, EmailSendResult } from '../types/index.js';
 
+// Ensure the API URL doesn't have trailing slash and doesn't already include /api/3
+function normalizeApiUrl(url: string): string {
+  let normalized = url.replace(/\/+$/, ''); // Remove trailing slashes
+  // If URL already includes /api/3, use it as-is
+  if (normalized.includes('/api/3')) {
+    // Remove /api/3 from the end so we can add it consistently
+    normalized = normalized.replace(/\/api\/3\/?$/, '');
+  }
+  return normalized;
+}
+
 const acClient = axios.create({
-  baseURL: env.ACTIVECAMPAIGN_API_URL,
+  baseURL: normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL),
   headers: {
     'Api-Token': env.ACTIVECAMPAIGN_API_KEY,
     'Content-Type': 'application/json',
   },
 });
 
+// Log the configured URL on init for debugging
+console.log(`[ActiveCampaign] Configured base URL: ${normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL)}`);
+
 /**
  * Send a campaign email to a list
  */
 export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendResult> {
   try {
+    console.log(`[ActiveCampaign] Creating campaign for list ${data.listId}: "${data.subject}"`);
+
     // Step 1: Create a campaign
     const campaignResponse = await acClient.post('/api/3/campaigns', {
       campaign: {
@@ -28,6 +44,7 @@ export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendRe
     });
 
     const campaignId = campaignResponse.data.campaign.id;
+    console.log(`[ActiveCampaign] Campaign created: ${campaignId}`);
 
     // Step 2: Create the message content
     await acClient.post('/api/3/messages', {
@@ -41,6 +58,7 @@ export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendRe
         text: data.body,
       },
     });
+    console.log(`[ActiveCampaign] Message content created for campaign ${campaignId}`);
 
     // Step 3: Associate campaign with list
     await acClient.post('/api/3/campaignLists', {
@@ -49,17 +67,41 @@ export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendRe
         list: data.listId,
       },
     });
+    console.log(`[ActiveCampaign] Campaign ${campaignId} associated with list ${data.listId}`);
 
     // Step 4: Send the campaign
     await acClient.post(`/api/3/campaigns/${campaignId}/send`);
+    console.log(`[ActiveCampaign] Campaign ${campaignId} sent successfully`);
 
     return {
       success: true,
       campaignId: campaignId.toString(),
     };
   } catch (error) {
+    // Enhanced error logging
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const statusText = error.response?.statusText;
+      const responseData = error.response?.data;
+      const requestUrl = error.config?.url;
+      const requestMethod = error.config?.method;
+
+      console.error(`[ActiveCampaign] API Error:`, {
+        status,
+        statusText,
+        url: requestUrl,
+        method: requestMethod,
+        response: responseData,
+      });
+
+      return {
+        success: false,
+        error: `ActiveCampaign API error ${status}: ${responseData?.message || statusText || 'Unknown error'}`,
+      };
+    }
+
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('ActiveCampaign send failed:', errorMessage);
+    console.error('[ActiveCampaign] Send failed:', errorMessage);
     return {
       success: false,
       error: errorMessage,

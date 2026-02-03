@@ -346,17 +346,20 @@ export async function generateReminderDescription(
         role: 'user',
         content: `Write a single compelling sentence (15-25 words) describing what attendees will learn or gain from a CA Pro ${typeLabel} about "${topic}".
 
-Rules:
-- Start with an action verb or benefit
-- Be specific about the value they'll get
+CRITICAL Rules:
+- DO NOT invent specific details not in the topic (no specific numbers, lists, or frameworks you made up)
+- DO NOT start with "Stefan" (the email template already mentions him)
+- Start with an action verb focused on the attendee benefit: "Learn...", "Discover...", "Get...", "See..."
+- Be specific about the value without making up details
 - Don't use generic phrases like "learn about" or "discuss"
 - Don't mention the call type or time
-- Write from third person perspective (Stefan will share...)
+- Keep it genuine - only reference what's actually in the topic name
 
-Example topics and descriptions:
-- "Email Funnel Breakdown" → "Stefan breaks down a high-converting email funnel and shows exactly what makes each piece work."
-- "VSL Rewrite Session" → "Watch Stefan rewrite a struggling VSL live, explaining the psychology behind each change."
-- "Q&A and Hot Seats" → "Get your copy questions answered live and see Stefan diagnose real funnels from members."
+Example topics and good descriptions:
+- "Email Funnel Breakdown" → "See a high-converting email funnel broken down piece by piece, with the psychology behind each element explained."
+- "VSL Rewrite Session" → "Watch a struggling VSL get rewritten live, with the reasoning behind each change explained in real-time."
+- "Copy Chief Checklist" → "Learn the systematic approach to evaluating copy before any campaign goes live."
+- "Q&A and Hot Seats" → "Get your copy questions answered live and see real funnels diagnosed on the spot."
 
 Now write a description for: "${topic}"`,
       },
@@ -366,7 +369,7 @@ Now write a description for: "${topic}"`,
   const description =
     response.content[0].type === 'text'
       ? response.content[0].text.trim()
-      : `Stefan covers ${topic} with actionable strategies you can implement immediately.`;
+      : `Learn practical strategies for ${topic} that you can implement immediately.`;
 
   // Clean up any quotes or extra formatting
   return description.replace(/^["']|["']$/g, '').trim();
