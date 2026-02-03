@@ -1,6 +1,7 @@
 import * as slack from '../services/slack.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as circle from '../services/circle.js';
+import * as claude from '../services/claude.js';
 import * as pendingStore from '../services/pending-store.js';
 import { config } from '../config/env.js';
 import type { PendingMessage } from '../services/pending-store.js';
@@ -175,6 +176,46 @@ export async function handleSetMessage(
 }
 
 /**
+ * Handle "Edit with AI" button click - open feedback modal
+ */
+export async function handleEditWithAi(
+  pendingId: string,
+  triggerId: string
+): Promise<{ success: boolean; error?: string }> {
+  const pending = pendingStore.getPending(pendingId);
+
+  if (!pending) {
+    return { success: false, error: 'Message not found or expired' };
+  }
+
+  try {
+    const metadata = {
+      pendingId,
+      messageType: pending.type,
+      channel: pending.channel,
+      callType: pending.callType,
+      timing: pending.timing,
+      topic: pending.metadata.topic as string | undefined,
+    };
+
+    const success = await slack.openEditWithAiModal(
+      triggerId,
+      pendingId,
+      pending.message,
+      metadata
+    );
+
+    return { success };
+  } catch (error) {
+    console.error('Failed to open AI edit modal:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
  * Handle modal submission - update pending message and post preview
  */
 export async function handleModalSubmission(
@@ -252,6 +293,104 @@ export async function handleModalSubmission(
     return { success: true };
   } catch (error) {
     console.error('Failed to post updated preview:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Handle AI edit modal submission - regenerate message with Claude
+ */
+export async function handleAiEditModalSubmission(
+  pendingId: string,
+  feedback: string,
+  metadata: {
+    channel: string;
+    callType: string;
+    messageType: string;
+    timing?: string;
+    topic?: string;
+    originalTopic?: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  const pending = pendingStore.getPending(pendingId);
+
+  if (!pending) {
+    return { success: false, error: 'Message not found or expired' };
+  }
+
+  try {
+    // Regenerate the message using Claude with the feedback
+    const regeneratedMessage = await claude.regenerateMessageWithFeedback(
+      pending.message,
+      feedback,
+      {
+        messageType: metadata.messageType as 'reminder' | 'recap',
+        channel: metadata.channel as 'whatsapp' | 'email' | 'circle',
+        callType: metadata.callType as 'weekly' | 'monthly',
+        topic: metadata.topic,
+        originalTopic: metadata.originalTopic,
+      }
+    );
+
+    // Update the pending message
+    pendingStore.updatePendingMessage(pendingId, regeneratedMessage);
+
+    // Build the appropriate blocks for the regenerated message
+    let blocks: unknown[];
+
+    if (pending.channel === 'whatsapp') {
+      if (pending.type === 'reminder') {
+        blocks = slack.buildWhatsAppReminderBlocks(
+          regeneratedMessage,
+          pendingId,
+          pending.timing || 'dayOf',
+          pending.callType
+        );
+      } else {
+        blocks = slack.buildWhatsAppRecapBlocks(regeneratedMessage, pendingId);
+      }
+    } else if (pending.channel === 'email') {
+      if (pending.type === 'reminder') {
+        blocks = slack.buildEmailReminderBlocks(
+          regeneratedMessage,
+          pendingId,
+          pending.timing || 'dayOf',
+          pending.callType
+        );
+      } else {
+        blocks = slack.buildEmailRecapBlocks(regeneratedMessage, pendingId);
+      }
+    } else {
+      // Circle
+      const topic = (pending.metadata.topic as string) || 'Training';
+      blocks = slack.buildCircleRecapBlocks(regeneratedMessage, pendingId, topic);
+    }
+
+    // Post the regenerated message as a new message in the thread
+    await slack.postMessage(
+      pending.slackChannel,
+      `🤖 Regenerated ${pending.channel} message`,
+      [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*🤖 Regenerated ${pending.channel.charAt(0).toUpperCase() + pending.channel.slice(1)} Message*\n_Feedback: "${feedback}"_`,
+          },
+        },
+        ...blocks,
+      ],
+      undefined,
+      pending.slackMessageTs
+    );
+
+    console.log(`AI regenerated message for ${pendingId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to regenerate message with AI:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

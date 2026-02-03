@@ -542,6 +542,111 @@ export function buildSetMessageModal(
 }
 
 /**
+ * Open a modal for AI-powered message editing
+ */
+export async function openEditWithAiModal(
+  triggerId: string,
+  pendingId: string,
+  currentMessage: string,
+  metadata: SlackPendingMetadata
+): Promise<boolean> {
+  const view = buildEditWithAiModal(pendingId, currentMessage, metadata);
+
+  try {
+    const response = await slackClient.post('/views.open', {
+      trigger_id: triggerId,
+      view,
+    });
+
+    if (!response.data.ok) {
+      console.error('Failed to open AI edit modal:', response.data.error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error opening AI edit modal:', error);
+    return false;
+  }
+}
+
+/**
+ * Build the AI Edit modal view
+ */
+export function buildEditWithAiModal(
+  pendingId: string,
+  currentMessage: string,
+  metadata: SlackPendingMetadata
+): Record<string, unknown> {
+  const channelLabel = metadata.channel === 'whatsapp' ? 'WhatsApp' :
+                       metadata.channel === 'email' ? 'Email' : 'Circle';
+  const typeLabel = metadata.messageType === 'reminder' ? 'Reminder' : 'Recap';
+
+  // Truncate message preview if too long
+  const previewMessage = currentMessage.length > 500
+    ? currentMessage.substring(0, 500) + '...'
+    : currentMessage;
+
+  return {
+    type: 'modal',
+    callback_id: 'edit_with_ai_modal',
+    private_metadata: JSON.stringify({ ...metadata, pendingId }),
+    title: {
+      type: 'plain_text',
+      text: `🤖 Edit ${channelLabel}`,
+      emoji: true,
+    },
+    submit: {
+      type: 'plain_text',
+      text: 'Regenerate',
+      emoji: true,
+    },
+    close: {
+      type: 'plain_text',
+      text: 'Cancel',
+      emoji: true,
+    },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Current ${typeLabel} (${channelLabel}):*`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '```' + previewMessage + '```',
+        },
+      },
+      {
+        type: 'divider',
+      },
+      {
+        type: 'input',
+        block_id: 'feedback_input_block',
+        label: {
+          type: 'plain_text',
+          text: 'What would you like to change?',
+          emoji: true,
+        },
+        element: {
+          type: 'plain_text_input',
+          action_id: 'feedback_input',
+          multiline: true,
+          placeholder: {
+            type: 'plain_text',
+            text: 'e.g., "Make it shorter", "Add more urgency", "Emphasize the hook formula more"',
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
  * Update a message in place
  */
 export async function updateMessage(
@@ -624,7 +729,7 @@ export function buildCallTypeSelectionBlocks(topic: string): unknown[] {
 }
 
 /**
- * Build WhatsApp reminder blocks with Copy and Set Message buttons
+ * Build WhatsApp reminder blocks with Copy and Edit buttons
  */
 export function buildWhatsAppReminderBlocks(
   message: string,
@@ -632,7 +737,7 @@ export function buildWhatsAppReminderBlocks(
   timing: ReminderTiming,
   callType: CallType
 ): unknown[] {
-  const timingLabel = timing === 'dayBefore' ? 'Day Before' : 'Day Of';
+  const timingLabel = timing === 'dayBefore' ? 'Day Before' : timing === 'weekBefore' ? 'Week Before' : 'Day Of';
   const encodedMessage = encodeURIComponent(message);
   const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
@@ -671,10 +776,10 @@ export function buildWhatsAppReminderBlocks(
           type: 'button',
           text: {
             type: 'plain_text',
-            text: '✏️ Set Message',
+            text: '🤖 Edit',
             emoji: true,
           },
-          action_id: 'set_message',
+          action_id: 'edit_with_ai',
           value: pendingId,
         },
       ],
@@ -683,7 +788,7 @@ export function buildWhatsAppReminderBlocks(
 }
 
 /**
- * Build Email reminder blocks with Approve and Set Message buttons
+ * Build Email reminder blocks with Approve, Set Message, and Edit buttons
  */
 export function buildEmailReminderBlocks(
   message: string,
@@ -691,7 +796,7 @@ export function buildEmailReminderBlocks(
   timing: ReminderTiming,
   callType: CallType
 ): unknown[] {
-  const timingLabel = timing === 'dayBefore' ? 'Day Before' : 'Day Of';
+  const timingLabel = timing === 'dayBefore' ? 'Day Before' : timing === 'weekBefore' ? 'Week Before' : 'Day Of';
 
   // Truncate for code block display if needed
   const displayMessage = message.length > 2800 ? message.substring(0, 2800) + '...' : message;
@@ -735,13 +840,23 @@ export function buildEmailReminderBlocks(
           action_id: 'set_message',
           value: pendingId,
         },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '🤖 Edit',
+            emoji: true,
+          },
+          action_id: 'edit_with_ai',
+          value: pendingId,
+        },
       ],
     },
   ];
 }
 
 /**
- * Build WhatsApp recap blocks with Copy and Set Message buttons
+ * Build WhatsApp recap blocks with Copy and Edit buttons
  */
 export function buildWhatsAppRecapBlocks(
   message: string,
@@ -788,10 +903,10 @@ export function buildWhatsAppRecapBlocks(
           type: 'button',
           text: {
             type: 'plain_text',
-            text: '✏️ Set Message',
+            text: '🤖 Edit',
             emoji: true,
           },
-          action_id: 'set_message',
+          action_id: 'edit_with_ai',
           value: pendingId,
         },
       ],
@@ -800,7 +915,7 @@ export function buildWhatsAppRecapBlocks(
 }
 
 /**
- * Build Email recap blocks with Approve and Set Message buttons
+ * Build Email recap blocks with Approve, Set Message, and Edit buttons
  */
 export function buildEmailRecapBlocks(
   message: string,
@@ -848,13 +963,23 @@ export function buildEmailRecapBlocks(
           action_id: 'set_message',
           value: pendingId,
         },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '🤖 Edit',
+            emoji: true,
+          },
+          action_id: 'edit_with_ai',
+          value: pendingId,
+        },
       ],
     },
   ];
 }
 
 /**
- * Build Circle recap blocks with Approve and Set Message buttons
+ * Build Circle recap blocks with Approve, Set Message, and Edit buttons
  */
 export function buildCircleRecapBlocks(
   message: string,
@@ -901,6 +1026,16 @@ export function buildCircleRecapBlocks(
             emoji: true,
           },
           action_id: 'set_message',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '🤖 Edit',
+            emoji: true,
+          },
+          action_id: 'edit_with_ai',
           value: pendingId,
         },
       ],

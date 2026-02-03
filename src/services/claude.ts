@@ -381,6 +381,68 @@ Now write a description for topic "${topic}" with presenter "${presenter}":`,
   return description.replace(/^["']|["']$/g, '').trim();
 }
 
+/**
+ * Regenerate a message based on user feedback
+ * Uses the original message, context, and feedback to create an improved version
+ */
+export async function regenerateMessageWithFeedback(
+  currentMessage: string,
+  feedback: string,
+  context: {
+    messageType: 'reminder' | 'recap';
+    channel: 'whatsapp' | 'email' | 'circle';
+    callType: 'weekly' | 'monthly';
+    topic?: string;
+    originalTopic?: string;
+  }
+): Promise<string> {
+  const channelLabel = context.channel === 'whatsapp' ? 'WhatsApp' :
+                       context.channel === 'email' ? 'Email' : 'Circle';
+  const typeLabel = context.messageType === 'reminder' ? 'Reminder' : 'Recap';
+  const callLabel = context.callType === 'weekly' ? 'Weekly Training Call' : 'Monthly Business Owner Call';
+
+  console.log(`[Claude] Regenerating ${channelLabel} ${typeLabel} with feedback: "${feedback}"`);
+
+  const response = await anthropic.messages.create({
+    model: 'claude-opus-4-20250514',
+    max_tokens: 1000,
+    messages: [
+      {
+        role: 'user',
+        content: `You are helping edit a ${channelLabel} ${typeLabel.toLowerCase()} message for a CA Pro ${callLabel}.
+
+CURRENT MESSAGE:
+${currentMessage}
+
+USER FEEDBACK:
+${feedback}
+
+${context.topic ? `TOPIC: ${context.topic}` : ''}
+${context.originalTopic ? `ORIGINAL REQUEST: ${context.originalTopic}` : ''}
+
+INSTRUCTIONS:
+- Apply the user's feedback to improve the message
+- Keep the same overall structure and format as the original
+- ${context.channel === 'whatsapp' ? 'Keep it concise and mobile-friendly with emojis' : ''}
+- ${context.channel === 'email' ? 'Maintain professional but friendly tone, keep [first name] placeholder' : ''}
+- ${context.channel === 'circle' ? 'Keep markdown formatting for Circle' : ''}
+- Use future tense for descriptions (e.g., "will break down" not "breaks down")
+- Do NOT add any commentary or explanation, just output the improved message
+
+OUTPUT THE IMPROVED MESSAGE:`,
+      },
+    ],
+  });
+
+  const regeneratedMessage =
+    response.content[0].type === 'text'
+      ? response.content[0].text.trim()
+      : currentMessage;
+
+  console.log(`[Claude] Regenerated message (${regeneratedMessage.length} chars)`);
+  return regeneratedMessage;
+}
+
 // ===========================================
 // Recap Generation
 // ===========================================

@@ -539,6 +539,26 @@ app.post('/api/slack/interactions', express.urlencoded({ extended: true }), asyn
         return res.json({ ok: true });
       }
 
+      // Edit with AI button - open feedback modal
+      if (actionId === 'edit_with_ai') {
+        const result = await approvalHandler.handleEditWithAi(
+          pendingId,
+          payload.trigger_id
+        );
+
+        if (!result.success) {
+          await slack.postMessage(
+            payload.channel.id,
+            `⚠️ Could not open AI edit modal: ${result.error}`,
+            undefined,
+            undefined,
+            payload.message.ts
+          );
+        }
+
+        return res.json({ ok: true });
+      }
+
       // Approve Email button
       if (actionId === 'approve_email') {
         const result = await approvalHandler.handleEmailApproval(
@@ -632,6 +652,44 @@ app.post('/api/slack/interactions', express.urlencoded({ extended: true }), asyn
         }
 
         // Close the modal (empty response)
+        return res.json({});
+      }
+
+      // Handle AI edit modal submission
+      if (callbackId === 'edit_with_ai_modal') {
+        // Get the feedback from the modal
+        const values = payload.view.state.values;
+        const feedback = values.feedback_input_block?.feedback_input?.value || '';
+
+        if (!feedback.trim()) {
+          return res.json({
+            response_action: 'errors',
+            errors: {
+              feedback_input_block: 'Please enter feedback for the AI',
+            },
+          });
+        }
+
+        // Get the metadata
+        const metadata = JSON.parse(payload.view.private_metadata);
+
+        // Handle the AI edit submission
+        const result = await approvalHandler.handleAiEditModalSubmission(
+          metadata.pendingId,
+          feedback,
+          metadata
+        );
+
+        if (!result.success) {
+          return res.json({
+            response_action: 'errors',
+            errors: {
+              feedback_input_block: result.error || 'Failed to regenerate message',
+            },
+          });
+        }
+
+        // Close the modal
         return res.json({});
       }
 
