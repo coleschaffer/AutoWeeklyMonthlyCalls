@@ -7,7 +7,7 @@ import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as slack from '../services/slack.js';
 import * as pendingStore from '../services/pending-store.js';
-import { getReminderTopic } from '../services/pending-store.js';
+import { getReminderTopic, upsertCallHistory } from '../services/pending-store.js';
 import { detectCallType } from '../config/schedule.js';
 import { env } from '../config/env.js';
 import {
@@ -178,6 +178,22 @@ export async function processRecording(
     console.log('Step 10: Cleaning up...');
     await videoProcessor.cleanupTempFiles([videoPath, trimResult.outputPath]);
 
+    // Log to call history
+    await upsertCallHistory({
+      meetingId,
+      callType,
+      topic,
+      presenter: storedTopic?.presenter,
+      callDate: recording.startTime,
+      status: 'completed',
+      youtubeUrl: youtubeResult.videoUrl,
+      youtubeId: youtubeResult.videoId,
+      circleUrl: circlePost.url,
+      driveVideoUrl: driveLinks.video?.webViewLink,
+      driveTranscriptUrl: driveLinks.transcript?.webViewLink,
+      driveChatUrl: driveLinks.chat?.webViewLink,
+    });
+
     console.log('Post-call processing complete!');
 
     return {
@@ -191,6 +207,20 @@ export async function processRecording(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error(`Post-call processing failed: ${errorMessage}`);
+
+    // Log failure to call history
+    try {
+      await upsertCallHistory({
+        meetingId,
+        callType: detectCallType(rawTopic),
+        topic: rawTopic,
+        callDate: new Date(),
+        status: 'failed',
+        errorMessage,
+      });
+    } catch (historyError) {
+      console.error('Failed to log call history:', historyError);
+    }
 
     return {
       success: false,
