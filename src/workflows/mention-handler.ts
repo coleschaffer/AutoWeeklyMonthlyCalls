@@ -439,7 +439,7 @@ function formatCallTime(date: Date): string {
 }
 
 /**
- * Post a WhatsApp reminder with Copy button
+ * Post a WhatsApp reminder with Copy and Edit buttons
  */
 async function postWhatsAppReminder(
   channel: string,
@@ -486,10 +486,10 @@ async function postWhatsAppReminder(
           type: 'button',
           text: {
             type: 'plain_text',
-            text: '✏️ Set Message',
+            text: '🤖 Edit',
             emoji: true,
           },
-          action_id: 'set_message',
+          action_id: 'edit_with_ai',
           value: pendingId,
         },
       ],
@@ -547,6 +547,16 @@ async function postEmailReminder(
             emoji: true,
           },
           action_id: 'set_message',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '🤖 Edit',
+            emoji: true,
+          },
+          action_id: 'edit_with_ai',
           value: pendingId,
         },
       ],
