@@ -2,10 +2,11 @@ import * as slack from '../services/slack.js';
 import * as claude from '../services/claude.js';
 import * as zoom from '../services/zoom.js';
 import { env } from '../config/env.js';
-import { storePendingMessage, getPendingMessage } from '../services/pending-store.js';
+import { storePending } from '../services/pending-store.js';
 import {
-  getRecapTemplates,
-  TEMPLATE_IDS,
+  getReminderTemplates,
+  renderTemplate,
+  type ReminderContext,
 } from '../config/templates.js';
 
 // ===========================================
@@ -105,98 +106,113 @@ export async function handleAppMention(event: {
     // Generate reminder description using Claude
     const description = await claude.generateReminderDescription(topicInfo.topic, callType);
 
-    // Get templates
-    const templates = getRecapTemplates(callType);
+    // Build context for template rendering
+    const reminderContext: ReminderContext = {
+      topic: topicInfo.topic,
+      description,
+      time: callTime,
+      zoomLink,
+      day: zoomInfo?.startTime
+        ? zoomInfo.startTime.toLocaleString('en-US', { weekday: 'long', timeZone: 'America/New_York' })
+        : callType === 'weekly' ? 'Tuesday' : 'Monday',
+      date: zoomInfo?.startTime
+        ? zoomInfo.startTime.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })
+        : '',
+    };
 
-    // Generate Day Before reminder (WhatsApp)
+    // Generate Day Before reminder (WhatsApp) - only for weekly
     if (callType === 'weekly') {
-      const dayBeforeMessage = templates.whatsappDayBefore
-        .replace('{{topic}}', topicInfo.topic)
-        .replace('{{description}}', description)
-        .replace('{{time}}', callTime)
-        .replace('{{zoomLink}}', zoomLink);
+      const dayBeforeTemplates = getReminderTemplates(callType, 'dayBefore');
+      if (dayBeforeTemplates.whatsapp) {
+        const dayBeforeMessage = renderTemplate(dayBeforeTemplates.whatsapp, reminderContext);
 
-      // Store and post Day Before WhatsApp
-      const dayBeforePendingId = storePendingMessage({
+        // Store and post Day Before WhatsApp
+        const dayBeforePendingId = storePending({
+          type: 'reminder',
+          channel: 'whatsapp',
+          callType,
+          timing: 'dayBefore',
+          message: dayBeforeMessage,
+          metadata: {
+            topic: topicInfo.topic,
+            description,
+            zoomLink,
+            callTime,
+          },
+          slackMessageTs: ts,
+          slackChannel: channel,
+        });
+
+        await postWhatsAppReminder(
+          channel,
+          ts,
+          '📅 DAY BEFORE Reminder (WhatsApp)',
+          dayBeforeMessage,
+          dayBeforePendingId
+        );
+      }
+    }
+
+    // Get Day Of templates
+    const dayOfTemplates = getReminderTemplates(callType, 'dayOf');
+
+    // Generate Day Of reminder (WhatsApp)
+    if (dayOfTemplates.whatsapp) {
+      const dayOfWhatsAppMessage = renderTemplate(dayOfTemplates.whatsapp, reminderContext);
+
+      const dayOfWhatsAppPendingId = storePending({
         type: 'reminder',
         channel: 'whatsapp',
         callType,
-        timing: 'dayBefore',
-        message: dayBeforeMessage,
+        timing: 'dayOf',
+        message: dayOfWhatsAppMessage,
         metadata: {
           topic: topicInfo.topic,
           description,
           zoomLink,
           callTime,
         },
+        slackMessageTs: ts,
+        slackChannel: channel,
       });
 
       await postWhatsAppReminder(
         channel,
         ts,
-        '📅 DAY BEFORE Reminder (WhatsApp)',
-        dayBeforeMessage,
-        dayBeforePendingId
+        '📅 DAY OF Reminder (WhatsApp)',
+        dayOfWhatsAppMessage,
+        dayOfWhatsAppPendingId
       );
     }
 
-    // Generate Day Of reminder (WhatsApp)
-    const dayOfWhatsAppMessage = templates.whatsappDayOf
-      .replace('{{topic}}', topicInfo.topic)
-      .replace('{{description}}', description)
-      .replace('{{time}}', callTime)
-      .replace('{{zoomLink}}', zoomLink);
-
-    const dayOfWhatsAppPendingId = storePendingMessage({
-      type: 'reminder',
-      channel: 'whatsapp',
-      callType,
-      timing: 'dayOf',
-      message: dayOfWhatsAppMessage,
-      metadata: {
-        topic: topicInfo.topic,
-        description,
-        zoomLink,
-        callTime,
-      },
-    });
-
-    await postWhatsAppReminder(
-      channel,
-      ts,
-      '📅 DAY OF Reminder (WhatsApp)',
-      dayOfWhatsAppMessage,
-      dayOfWhatsAppPendingId
-    );
-
     // Generate Day Of reminder (Email)
-    const dayOfEmailMessage = templates.emailDayOf
-      .replace('{{topic}}', topicInfo.topic)
-      .replace('{{description}}', description)
-      .replace('{{time}}', callTime)
-      .replace('{{zoomLink}}', zoomLink);
+    if (dayOfTemplates.email) {
+      const dayOfEmailMessage = renderTemplate(dayOfTemplates.email, reminderContext);
 
-    const dayOfEmailPendingId = storePendingMessage({
-      type: 'reminder',
-      channel: 'email',
-      callType,
-      timing: 'dayOf',
-      message: dayOfEmailMessage,
-      metadata: {
-        topic: topicInfo.topic,
-        description,
-        zoomLink,
-        callTime,
-      },
-    });
+      const dayOfEmailPendingId = storePending({
+        type: 'reminder',
+        channel: 'email',
+        callType,
+        timing: 'dayOf',
+        message: dayOfEmailMessage,
+        metadata: {
+          topic: topicInfo.topic,
+          description,
+          zoomLink,
+          callTime,
+        },
+        slackMessageTs: ts,
+        slackChannel: channel,
+      });
 
-    await postEmailReminder(
-      channel,
-      ts,
-      '📧 DAY OF Reminder (Email)',
-      dayOfEmailMessage,
-      dayOfEmailPendingId
-    );
+      await postEmailReminder(
+        channel,
+        ts,
+        '📧 DAY OF Reminder (Email)',
+        dayOfEmailMessage,
+        dayOfEmailPendingId
+      );
+    }
 
     // Tag Rebecca if configured
     if (REBECCA_USER_ID) {
