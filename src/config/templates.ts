@@ -116,7 +116,7 @@ export const EMAIL_WEEKLY_REMINDER_DAY_BEFORE: MessageTemplate = {
   callType: 'weekly',
   timing: 'dayBefore',
   subject: 'CA Pro Weekly Call Tomorrow',
-  template: `Hey [first name],
+  template: `Hey,
 
 Quick reminder - tomorrow's Weekly Training Call will be at {{time}} EST.
 
@@ -136,7 +136,7 @@ export const EMAIL_WEEKLY_REMINDER_DAY_OF: MessageTemplate = {
   callType: 'weekly',
   timing: 'dayOf',
   subject: 'CA Pro Weekly Call Today',
-  template: `Hey [first name],
+  template: `Hey,
 
 Quick reminder - today's Weekly Training Call will be at {{time}} EST.
 
@@ -156,7 +156,7 @@ export const EMAIL_MONTHLY_REMINDER_WEEK_BEFORE: MessageTemplate = {
   callType: 'monthly',
   timing: 'weekBefore',
   subject: 'CA Pro Monthly Call Soon',
-  template: `Hey [first name],
+  template: `Hey,
 
 Quick reminder - our Monthly Business Owner Call will be {{day}}, {{date}} at {{time}} EST.
 
@@ -176,7 +176,7 @@ export const EMAIL_MONTHLY_REMINDER_DAY_OF: MessageTemplate = {
   callType: 'monthly',
   timing: 'dayOf',
   subject: 'CA Pro Monthly Call Today',
-  template: `Hey [first name],
+  template: `Hey,
 
 Quick reminder - today's Monthly Business Owner Call will be at {{time}} EST.
 
@@ -244,7 +244,7 @@ export const EMAIL_WEEKLY_RECAP: MessageTemplate = {
   type: 'recap',
   callType: 'weekly',
   subject: 'CA Pro Weekly Call Recap',
-  template: `Hey [first name],
+  template: `Hey,
 
 This week's training call is now posted in Circle.
 
@@ -274,7 +274,7 @@ export const EMAIL_MONTHLY_RECAP: MessageTemplate = {
   type: 'recap',
   callType: 'monthly',
   subject: 'CA Pro Monthly Call Recap',
-  template: `Hey [first name],
+  template: `Hey,
 
 This month's Business Owner call is now posted in Circle.
 
