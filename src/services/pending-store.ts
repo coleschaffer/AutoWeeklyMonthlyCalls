@@ -501,7 +501,7 @@ export async function getReminderTopic(
         `SELECT topic, presenter FROM reminder_topics
          WHERE call_type = $1
          AND call_date BETWEEN ($2::date - INTERVAL '1 day') AND ($2::date + INTERVAL '1 day')
-         ORDER BY ABS(EXTRACT(EPOCH FROM (call_date - $2::date)))
+         ORDER BY ABS(call_date - $2::date)
          LIMIT 1`,
         [callType, dateStr]
       );
