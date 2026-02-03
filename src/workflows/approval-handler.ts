@@ -3,6 +3,7 @@ import * as activeCampaign from '../services/activecampaign.js';
 import * as circle from '../services/circle.js';
 import * as claude from '../services/claude.js';
 import * as pendingStore from '../services/pending-store.js';
+import { logSentMessage } from '../services/pending-store.js';
 import { config } from '../config/env.js';
 import type { PendingMessage } from '../services/pending-store.js';
 
@@ -70,6 +71,16 @@ export async function handleEmailApproval(
     const confirmBlocks = slack.buildApprovedConfirmationBlocks('email', pending.message);
     await slack.updateMessage(channel, messageTs, '✅ Email sent!', confirmBlocks);
 
+    // Log to sent_messages audit trail
+    await logSentMessage({
+      messageType: pending.type,
+      channel: 'email',
+      subject,
+      content: pending.message,
+      status: 'sent',
+      externalId: result.campaignId?.toString(),
+    });
+
     // Clean up pending message
     await pendingStore.deletePending(pendingId);
 
@@ -121,6 +132,16 @@ export async function handleCircleApproval(
     // Update Slack message to show posted status
     const confirmBlocks = slack.buildApprovedConfirmationBlocks('circle', pending.message);
     await slack.updateMessage(channel, messageTs, `✅ Posted to Circle!\n${result.url}`, confirmBlocks);
+
+    // Log to sent_messages audit trail
+    await logSentMessage({
+      messageType: pending.type,
+      channel: 'circle',
+      subject: title,
+      content: pending.message,
+      status: 'sent',
+      externalId: result.url,
+    });
 
     // Clean up pending message
     await pendingStore.deletePending(pendingId);
