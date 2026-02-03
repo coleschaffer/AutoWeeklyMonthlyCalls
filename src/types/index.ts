@@ -152,6 +152,37 @@ export interface CallSummary {
   keyTakeaways: string[];
 }
 
+export interface RecapSection {
+  title: string;
+  bullets: string[];
+}
+
+export interface StructuredRecap {
+  description: string;
+  quote: string;
+  speaker: string;
+  sections: RecapSection[]; // For weekly (2 sections with 3 bullets each)
+  bullets: string[]; // For monthly (4 plain bullets)
+}
+
+export interface GeneratedRecaps {
+  whatsapp: string;
+  email: string;
+  circle: string;
+  structured: StructuredRecap;
+}
+
+export interface GeneratedReminders {
+  dayBefore: {
+    whatsapp: string | null;
+    email: string | null;
+  };
+  dayOf: {
+    whatsapp: string | null;
+    email: string | null;
+  };
+}
+
 // ---- Workflow Types ----
 export interface ReminderTemplate {
   emailSubject: string;
@@ -195,4 +226,47 @@ export interface WebhookValidationResult {
   isValid: boolean;
   payload?: ZoomWebhookPayload;
   error?: string;
+}
+
+// ---- Slack Bot Flow Types ----
+export type SlackMessageChannel = 'whatsapp' | 'email' | 'circle';
+export type SlackMessageType = 'reminder' | 'recap';
+export type SlackReminderTiming = 'dayBefore' | 'dayOf';
+
+export interface SlackPendingMetadata {
+  pendingId: string;
+  messageType: SlackMessageType;
+  channel: SlackMessageChannel;
+  callType: CallType;
+  timing?: SlackReminderTiming;
+  topic?: string;
+  circleLink?: string;
+  zoomLink?: string;
+}
+
+export interface SlackActionPayload {
+  type: string;
+  user: { id: string; username: string };
+  channel: { id: string };
+  message: { ts: string; text?: string };
+  actions: Array<{
+    action_id: string;
+    value?: string;
+    block_id?: string;
+  }>;
+  trigger_id: string;
+  response_url: string;
+}
+
+export interface SlackModalSubmission {
+  type: 'view_submission';
+  user: { id: string };
+  view: {
+    id: string;
+    callback_id: string;
+    private_metadata: string;
+    state: {
+      values: Record<string, Record<string, { value: string }>>;
+    };
+  };
 }

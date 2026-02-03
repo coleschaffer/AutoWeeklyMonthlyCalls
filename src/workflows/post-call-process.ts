@@ -6,7 +6,9 @@ import * as circle from '../services/circle.js';
 import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as slack from '../services/slack.js';
+import * as pendingStore from '../services/pending-store.js';
 import { detectCallType } from '../config/schedule.js';
+import { env } from '../config/env.js';
 import {
   findConversationStart,
   extractPlainText,
@@ -149,7 +151,14 @@ export async function processRecording(
       summary.keyTakeaways,
       circlePost.url,
       youtubeResult.videoUrl,
-      recording.startTime
+      recording.startTime,
+      transcriptText,
+      {
+        video: driveLinks.video?.webViewLink,
+        transcript: driveLinks.transcript?.webViewLink,
+        chat: driveLinks.chat?.webViewLink,
+      },
+      youtubeResult.videoId
     );
     console.log('Follow-up notifications sent');
 
@@ -181,6 +190,7 @@ export async function processRecording(
 
 /**
  * Send follow-up notifications via email and Slack
+ * Now generates all recap formats and sends to Slack for approval
  */
 async function sendFollowUpNotifications(
   callType: CallType,
@@ -189,29 +199,132 @@ async function sendFollowUpNotifications(
   keyTakeaways: string[],
   circleUrl: string,
   youtubeUrl: string,
-  callDate: Date
+  callDate: Date,
+  transcriptText: string,
+  driveLinks?: { video?: string; transcript?: string; chat?: string },
+  youtubeId?: string
 ): Promise<void> {
-  // Send email notification
+  // Generate all recap formats using Claude
+  let recaps;
   try {
-    await activeCampaign.sendRecordingNotification(topic, description, circleUrl);
-    console.log('Email notification sent');
+    if (transcriptText && transcriptText.length > 100) {
+      recaps = await claude.generateAllRecaps(
+        transcriptText,
+        topic,
+        callType,
+        circleUrl,
+        driveLinks,
+        youtubeId
+      );
+      console.log('AI-generated recap formats created');
+    } else {
+      // Fallback if no transcript
+      const fallbackDescription = description || `Key insights from the ${callType} call on ${topic}.`;
+      recaps = {
+        whatsapp: `🎬 The ${callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner'} Call recap is posted!\n\n${fallbackDescription}\n\nCheck it out: ${circleUrl}`,
+        email: `Hey [first name],\n\nThis week's training call is now posted in Circle.\n\n${fallbackDescription}\n\nCheck it out here: ${circleUrl}\n\n—Stefan + Angela`,
+        circle: description,
+        structured: {
+          description: fallbackDescription,
+          quote: 'Great insights shared on today\'s call.',
+          speaker: 'Stefan',
+          sections: [],
+          bullets: keyTakeaways,
+        },
+      };
+    }
   } catch (error) {
-    console.error('Email notification failed:', error);
+    console.error('Failed to generate AI recaps:', error);
+    // Use simple fallback
+    const fallbackDescription = description || `Key insights from the ${callType} call on ${topic}.`;
+    recaps = {
+      whatsapp: `🎬 The ${callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner'} Call recap is posted!\n\n${fallbackDescription}\n\nCheck it out: ${circleUrl}`,
+      email: `Hey [first name],\n\nThis week's training call is now posted in Circle.\n\n${fallbackDescription}\n\nCheck it out here: ${circleUrl}\n\n—Stefan + Angela`,
+      circle: description,
+      structured: {
+        description: fallbackDescription,
+        quote: 'Great insights shared on today\'s call.',
+        speaker: 'Stefan',
+        sections: [],
+        bullets: keyTakeaways,
+      },
+    };
   }
 
-  // Send Slack notification to admin (for WhatsApp copy)
+  // Send to Slack for approval (don't auto-send anymore)
   try {
-    if (slack.isSlackConfigured()) {
-      await slack.sendRecapToAdmin(
-        callType,
-        callDate,
-        topic,
-        description,
-        keyTakeaways,
-        circleUrl,
-        youtubeUrl
+    if (slack.isSlackConfigured() && env.SLACK_WELCOME_USER_ID) {
+      const adminChannel = await slack.openDmChannel(env.SLACK_WELCOME_USER_ID);
+
+      // Post header
+      await slack.postMessage(
+        adminChannel,
+        `🎬 New ${callType === 'weekly' ? 'Weekly' : 'Monthly'} Recap Ready for Review`,
+        [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: `🎬 ${topic} - Recap Ready`,
+              emoji: true,
+            },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Call Type:* ${callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner'}\n*Topic:* ${topic}\n*Circle Post:* ${circleUrl}\n\nReview and approve each message below.`,
+            },
+          },
+          {
+            type: 'divider',
+          },
+        ]
       );
-      console.log('Slack notification sent');
+
+      // Store and post Circle recap (needs approval to post)
+      const circlePendingId = pendingStore.storePending({
+        type: 'recap',
+        channel: 'circle',
+        callType,
+        message: recaps.circle,
+        metadata: { topic, circleUrl, youtubeUrl, youtubeId },
+        slackMessageTs: '',
+        slackChannel: adminChannel,
+      });
+
+      const circleBlocks = slack.buildCircleRecapBlocks(recaps.circle, circlePendingId, topic);
+      await slack.postMessage(adminChannel, 'Circle Recap', circleBlocks);
+
+      // Store and post WhatsApp recap (copy only)
+      const whatsappPendingId = pendingStore.storePending({
+        type: 'recap',
+        channel: 'whatsapp',
+        callType,
+        message: recaps.whatsapp,
+        metadata: { topic, circleUrl },
+        slackMessageTs: '',
+        slackChannel: adminChannel,
+      });
+
+      const whatsappBlocks = slack.buildWhatsAppRecapBlocks(recaps.whatsapp, whatsappPendingId);
+      await slack.postMessage(adminChannel, 'WhatsApp Recap', whatsappBlocks);
+
+      // Store and post Email recap (needs approval to send)
+      const emailPendingId = pendingStore.storePending({
+        type: 'recap',
+        channel: 'email',
+        callType,
+        message: recaps.email,
+        metadata: { topic, circleUrl },
+        slackMessageTs: '',
+        slackChannel: adminChannel,
+      });
+
+      const emailBlocks = slack.buildEmailRecapBlocks(recaps.email, emailPendingId);
+      await slack.postMessage(adminChannel, 'Email Recap', emailBlocks);
+
+      console.log('Slack recap messages sent for approval');
     }
   } catch (error) {
     console.error('Slack notification failed:', error);

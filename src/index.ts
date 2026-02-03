@@ -289,7 +289,7 @@ app.get('/api/upcoming-calls', async (_req: Request, res: Response) => {
 // Slack Endpoints
 // ===========================================
 
-// Slack event subscription endpoint (for thread replies)
+// Slack event subscription endpoint (for DMs, channel messages, and thread replies)
 app.post('/api/slack/events', async (req: Request, res: Response) => {
   try {
     const payload = req.body;
@@ -304,14 +304,48 @@ app.post('/api/slack/events', async (req: Request, res: Response) => {
     // In production, you'd use a custom middleware to preserve raw body
     const slack = await import('./services/slack.js');
 
-    // Handle message events (thread replies)
-    if (payload.event?.type === 'message' && payload.event?.thread_ts) {
-      console.log('Slack thread reply received');
+    // Handle message events
+    if (payload.event?.type === 'message') {
+      const event = payload.event;
 
-      // Handle edit request in background
-      handleSlackThreadReply(payload.event).catch(err => {
-        console.error('Error handling thread reply:', err);
-      });
+      // Skip bot messages and message_changed events
+      if (event.bot_id || event.subtype) {
+        return res.json({ ok: true });
+      }
+
+      // Handle DM messages (for reminder generation flow)
+      if (event.channel_type === 'im' && !event.thread_ts) {
+        console.log('Slack DM received for reminder generation');
+
+        // Handle DM in background
+        const reminderHandler = await import('./workflows/reminder-dm-handler.js');
+        reminderHandler.handleUserDm(event).catch(err => {
+          console.error('Error handling DM:', err);
+        });
+      }
+
+      // Handle channel messages (for topic detection in #ca-pro)
+      // This includes both regular messages AND thread replies in the channel
+      if (event.channel_type === 'channel') {
+        // Check if topic watcher is configured
+        const topicWatcher = await import('./workflows/topic-watcher.js');
+        if (topicWatcher.isTopicWatcherConfigured()) {
+          // Process in background - topic watcher handles both regular and thread messages
+          topicWatcher.handleChannelMessage(event).catch(err => {
+            console.error('Error handling channel message for topic detection:', err);
+          });
+        }
+      }
+
+      // Handle thread replies in DMs (for edit requests)
+      if (event.thread_ts && event.channel_type === 'im') {
+        console.log('Slack DM thread reply received');
+
+        // Handle edit request in background
+        handleSlackThreadReply(event).catch(err => {
+          console.error('Error handling thread reply:', err);
+        });
+      }
     }
 
     res.json({ ok: true });
@@ -321,19 +355,220 @@ app.post('/api/slack/events', async (req: Request, res: Response) => {
   }
 });
 
-// Slack interactions endpoint (button clicks)
+// Slack interactions endpoint (button clicks and modal submissions)
 app.post('/api/slack/interactions', express.urlencoded({ extended: true }), async (req: Request, res: Response) => {
   try {
     const payload = JSON.parse(req.body.payload);
-    console.log('Slack interaction:', payload.type, payload.actions?.[0]?.action_id);
+    console.log('Slack interaction:', payload.type, payload.actions?.[0]?.action_id || payload.view?.callback_id);
+
+    const slack = await import('./services/slack.js');
+    const approvalHandler = await import('./workflows/approval-handler.js');
+    const reminderHandler = await import('./workflows/reminder-dm-handler.js');
 
     // Handle button actions
     if (payload.type === 'block_actions') {
       const action = payload.actions[0];
+      const actionId = action.action_id;
+      const pendingId = action.value;
 
-      if (action.action_id === 'edit_message') {
-        // Post a message prompting user to reply in thread
-        const slack = await import('./services/slack.js');
+      // Weekly/Monthly selection buttons
+      if (actionId === 'select_weekly' || actionId === 'select_monthly') {
+        const callType = actionId === 'select_weekly' ? 'weekly' : 'monthly';
+        const topic = action.value;
+
+        // Update the original message to show selection made
+        await slack.updateMessage(
+          payload.channel.id,
+          payload.message.ts,
+          `✅ Selected: ${callType === 'weekly' ? 'Weekly' : 'Monthly'} call for "${topic}"`
+        );
+
+        // Handle the selection in background
+        reminderHandler.handleCallTypeSelection(
+          payload.channel.id,
+          payload.user.id,
+          topic,
+          callType,
+          payload.trigger_id
+        ).catch(err => {
+          console.error('Error handling call type selection:', err);
+        });
+
+        return res.json({ ok: true });
+      }
+
+      // Cancel button
+      if (actionId === 'cancel_reminder') {
+        await reminderHandler.handleCancelReminder(
+          payload.channel.id,
+          payload.message.ts
+        );
+        return res.json({ ok: true });
+      }
+
+      // Generate reminders from detected topic (topic watcher)
+      if (actionId === 'generate_reminders_from_topic') {
+        try {
+          const { topic, callType } = JSON.parse(action.value);
+
+          // Update the message to show we're processing
+          await slack.updateMessage(
+            payload.channel.id,
+            payload.message.ts,
+            `✅ Generating ${callType} reminders for "${topic}"...`
+          );
+
+          // Generate reminders
+          reminderHandler.handleCallTypeSelection(
+            payload.channel.id,
+            payload.user.id,
+            topic,
+            callType,
+            payload.trigger_id
+          ).catch(err => {
+            console.error('Error generating reminders from topic:', err);
+          });
+        } catch (err) {
+          console.error('Error parsing topic data:', err);
+        }
+        return res.json({ ok: true });
+      }
+
+      // Edit topic before generating (topic watcher)
+      if (actionId === 'edit_topic_before_generate') {
+        try {
+          const { topic, callType } = JSON.parse(action.value);
+
+          // Open a modal to edit the topic
+          const editTopicModal = {
+            type: 'modal',
+            callback_id: 'edit_topic_modal',
+            private_metadata: JSON.stringify({ callType }),
+            title: {
+              type: 'plain_text',
+              text: 'Edit Topic',
+              emoji: true,
+            },
+            submit: {
+              type: 'plain_text',
+              text: 'Generate Reminders',
+              emoji: true,
+            },
+            close: {
+              type: 'plain_text',
+              text: 'Cancel',
+              emoji: true,
+            },
+            blocks: [
+              {
+                type: 'input',
+                block_id: 'topic_input_block',
+                label: {
+                  type: 'plain_text',
+                  text: 'Topic',
+                  emoji: true,
+                },
+                element: {
+                  type: 'plain_text_input',
+                  action_id: 'topic_input',
+                  initial_value: topic,
+                  placeholder: {
+                    type: 'plain_text',
+                    text: 'Enter the call topic...',
+                  },
+                },
+              },
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `*Call Type:* ${callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner'}`,
+                },
+              },
+            ],
+          };
+
+          await slack.openModal(payload.trigger_id, editTopicModal);
+        } catch (err) {
+          console.error('Error opening edit topic modal:', err);
+        }
+        return res.json({ ok: true });
+      }
+
+      // Ignore detected topic
+      if (actionId === 'ignore_detected_topic') {
+        await slack.updateMessage(
+          payload.channel.id,
+          payload.message.ts,
+          '🚫 Topic ignored.'
+        );
+        return res.json({ ok: true });
+      }
+
+      // Set Message button - open modal
+      if (actionId === 'set_message') {
+        const result = await approvalHandler.handleSetMessage(
+          pendingId,
+          payload.trigger_id
+        );
+
+        if (!result.success) {
+          await slack.postMessage(
+            payload.channel.id,
+            `⚠️ Could not open edit modal: ${result.error}`,
+            undefined,
+            undefined,
+            payload.message.ts
+          );
+        }
+
+        return res.json({ ok: true });
+      }
+
+      // Approve Email button
+      if (actionId === 'approve_email') {
+        const result = await approvalHandler.handleEmailApproval(
+          pendingId,
+          payload.channel.id,
+          payload.message.ts
+        );
+
+        if (!result.success) {
+          await slack.postMessage(
+            payload.channel.id,
+            `⚠️ Email send failed: ${result.error}`,
+            undefined,
+            undefined,
+            payload.message.ts
+          );
+        }
+
+        return res.json({ ok: true });
+      }
+
+      // Approve Circle button
+      if (actionId === 'approve_circle') {
+        const result = await approvalHandler.handleCircleApproval(
+          pendingId,
+          payload.channel.id,
+          payload.message.ts
+        );
+
+        if (!result.success) {
+          await slack.postMessage(
+            payload.channel.id,
+            `⚠️ Circle post failed: ${result.error}`,
+            undefined,
+            undefined,
+            payload.message.ts
+          );
+        }
+
+        return res.json({ ok: true });
+      }
+
+      // Legacy edit_message button
+      if (actionId === 'edit_message') {
         await slack.postMessage(
           payload.channel.id,
           'Reply to this thread with your edit request (e.g., "make it shorter" or "add their experience")',
@@ -341,6 +576,89 @@ app.post('/api/slack/interactions', express.urlencoded({ extended: true }), asyn
           undefined,
           payload.message.ts
         );
+        return res.json({ ok: true });
+      }
+
+      // Copy buttons (link buttons don't need server handling, but we can track them)
+      if (actionId.startsWith('copy_')) {
+        // These are URL buttons - clicking them opens the copy.html page
+        // We could optionally track this or update the message to show "Copied"
+        console.log(`Copy button clicked: ${actionId}`);
+        return res.json({ ok: true });
+      }
+    }
+
+    // Handle modal submissions
+    if (payload.type === 'view_submission') {
+      const callbackId = payload.view.callback_id;
+
+      if (callbackId === 'set_message_modal') {
+        // Get the new message content from the modal
+        const values = payload.view.state.values;
+        const newMessage = values.message_input_block?.message_input?.value || '';
+
+        // Get the metadata
+        const metadata = JSON.parse(payload.view.private_metadata);
+
+        // Handle the modal submission
+        const result = await approvalHandler.handleModalSubmission(
+          metadata.pendingId,
+          newMessage,
+          metadata
+        );
+
+        if (!result.success) {
+          // Return an error to show in the modal
+          return res.json({
+            response_action: 'errors',
+            errors: {
+              message_input_block: result.error || 'Failed to update message',
+            },
+          });
+        }
+
+        // Close the modal (empty response)
+        return res.json({});
+      }
+
+      // Handle edit topic modal submission (from topic watcher)
+      if (callbackId === 'edit_topic_modal') {
+        const values = payload.view.state.values;
+        const topic = values.topic_input_block?.topic_input?.value || '';
+        const metadata = JSON.parse(payload.view.private_metadata);
+        const callType = metadata.callType || 'weekly';
+
+        if (!topic.trim()) {
+          return res.json({
+            response_action: 'errors',
+            errors: {
+              topic_input_block: 'Please enter a topic',
+            },
+          });
+        }
+
+        // Open DM channel with user and generate reminders
+        const userChannel = await slack.openDmChannel(payload.user.id);
+
+        // Post a message that we're generating
+        await slack.postMessage(
+          userChannel,
+          `✅ Generating ${callType} reminders for "${topic}"...`
+        );
+
+        // Generate reminders in background
+        reminderHandler.handleCallTypeSelection(
+          userChannel,
+          payload.user.id,
+          topic.trim(),
+          callType,
+          '' // No trigger_id needed since we're posting directly
+        ).catch(err => {
+          console.error('Error generating reminders from edited topic:', err);
+        });
+
+        // Close the modal
+        return res.json({});
       }
     }
 
@@ -423,6 +741,58 @@ app.get('/api/slack/users', async (_req: Request, res: Response) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('List users error:', errorMessage);
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Topic watcher status
+app.get('/api/slack/topic-watcher', async (_req: Request, res: Response) => {
+  try {
+    const topicWatcher = await import('./workflows/topic-watcher.js');
+    const status = topicWatcher.getTopicWatcherStatus();
+
+    res.json({
+      success: true,
+      data: status,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Manual test for topic detection (for debugging)
+app.post('/api/slack/test-topic-detection', async (req: Request, res: Response) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        error: 'message field required',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const claude = await import('./services/claude.js');
+    const result = await claude.detectTopicInMessage(message);
+
+    res.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({
       success: false,
       error: errorMessage,
@@ -625,11 +995,19 @@ app.listen(PORT, () => {
   console.log(`  GET  /api/status - System status`);
   console.log(`  GET  /api/upcoming-calls - Upcoming Zoom calls`);
   console.log('');
-  console.log('Slack:');
-  console.log(`  POST /api/slack/events - Slack event subscription`);
-  console.log(`  POST /api/slack/interactions - Button interactions`);
+  console.log('Slack Bot Flow:');
+  console.log(`  POST /api/slack/events - DM + channel + thread handlers`);
+  console.log(`  POST /api/slack/interactions - Buttons + modals`);
   console.log(`  POST /api/slack/send-recap - Send recap to admin`);
   console.log(`  GET  /api/slack/users - List Slack users`);
+  console.log(`  GET  /api/slack/topic-watcher - Topic watcher status`);
+  console.log(`  POST /api/slack/test-topic-detection - Test topic detection`);
+  console.log('');
+  console.log('Bot Features:');
+  console.log(`  - DM topic -> generates Weekly/Monthly reminders`);
+  console.log(`  - #ca-pro channel watcher -> detects Stefan's topic announcements`);
+  console.log(`  - Auto-recap after Zoom -> Circle/WhatsApp/Email approval`);
+  console.log(`  - Set Message modal for custom edits`);
   console.log('===========================================');
 
   // Setup cron jobs after server starts (non-blocking)

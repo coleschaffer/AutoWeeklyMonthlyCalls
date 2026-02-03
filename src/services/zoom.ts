@@ -372,3 +372,140 @@ export function extractTopicFromMeeting(rawTopic: string): string {
 
   return topic || 'Training Call';
 }
+
+// Meeting title patterns for matching
+const WEEKLY_MEETING_PATTERNS = [
+  'ca pro weekly training call',
+  'ca pro weekly',
+  'weekly training call',
+  'copy accelerator weekly',
+];
+
+const MONTHLY_MEETING_PATTERNS = [
+  'ca pro monthly business owners',
+  'ca pro monthly business owner',
+  'ca pro monthly',
+  'monthly business owner',
+  'copy accelerator monthly',
+];
+
+/**
+ * Get the join URL for the next scheduled call by type
+ * Matches meetings by title pattern
+ */
+export async function getJoinUrlForNextCall(
+  callType: 'weekly' | 'monthly'
+): Promise<{ joinUrl: string; startTime: Date; topic: string } | null> {
+  const patterns = callType === 'weekly' ? WEEKLY_MEETING_PATTERNS : MONTHLY_MEETING_PATTERNS;
+
+  try {
+    // Get upcoming meetings
+    const data = await zoomRequest<{
+      meetings: Array<{
+        id: number;
+        uuid: string;
+        topic: string;
+        start_time: string;
+        duration: number;
+        type: number;
+        join_url: string;
+      }>;
+    }>('/users/me/meetings?type=upcoming&page_size=50');
+
+    const now = new Date();
+
+    // Find the first matching meeting
+    for (const meeting of data.meetings) {
+      const meetingStartTime = new Date(meeting.start_time);
+
+      // Skip past meetings
+      if (meetingStartTime < now) continue;
+
+      const lowerTopic = meeting.topic.toLowerCase();
+
+      // Check if topic matches any pattern
+      const matches = patterns.some(pattern => lowerTopic.includes(pattern));
+
+      if (matches) {
+        // Get full meeting details to ensure we have the join URL
+        const meetingDetails = await getMeetingDetails(meeting.id);
+
+        return {
+          joinUrl: meetingDetails.join_url || meeting.join_url,
+          startTime: meetingStartTime,
+          topic: meeting.topic,
+        };
+      }
+    }
+
+    console.log(`No upcoming ${callType} meeting found matching patterns`);
+    return null;
+  } catch (error) {
+    console.error(`Error fetching ${callType} meeting URL:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get detailed meeting information including join URL
+ */
+async function getMeetingDetails(meetingId: number): Promise<{
+  id: number;
+  topic: string;
+  start_time: string;
+  join_url: string;
+  password?: string;
+}> {
+  return zoomRequest(`/meetings/${meetingId}`);
+}
+
+/**
+ * Get meeting info with join URL for a specific date and call type
+ */
+export async function getMeetingForDate(
+  date: Date,
+  callType: 'weekly' | 'monthly'
+): Promise<{ joinUrl: string; startTime: Date; topic: string } | null> {
+  const patterns = callType === 'weekly' ? WEEKLY_MEETING_PATTERNS : MONTHLY_MEETING_PATTERNS;
+
+  try {
+    const data = await zoomRequest<{
+      meetings: Array<{
+        id: number;
+        topic: string;
+        start_time: string;
+        join_url: string;
+      }>;
+    }>('/users/me/meetings?type=upcoming&page_size=50');
+
+    for (const meeting of data.meetings) {
+      const meetingDate = new Date(meeting.start_time);
+
+      // Check if same day
+      const sameDay =
+        meetingDate.getFullYear() === date.getFullYear() &&
+        meetingDate.getMonth() === date.getMonth() &&
+        meetingDate.getDate() === date.getDate();
+
+      if (!sameDay) continue;
+
+      const lowerTopic = meeting.topic.toLowerCase();
+      const matches = patterns.some(pattern => lowerTopic.includes(pattern));
+
+      if (matches) {
+        const meetingDetails = await getMeetingDetails(meeting.id);
+
+        return {
+          joinUrl: meetingDetails.join_url || meeting.join_url,
+          startTime: meetingDate,
+          topic: meeting.topic,
+        };
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Error fetching meeting for date:`, error);
+    return null;
+  }
+}

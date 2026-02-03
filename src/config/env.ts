@@ -41,6 +41,8 @@ const envSchema = z.object({
   SLACK_CLIENT_SECRET: z.string().optional(),
   SLACK_WELCOME_USER_ID: z.string().optional(),
   SLACK_USER_ID: z.string().optional(), // Alternative name
+  // Topic watcher configuration
+  SLACK_CA_PRO_CHANNEL_ID: z.string().optional(), // #ca-pro channel ID to watch for topics
 
   // App
   PORT: z.string().default('3000'),
@@ -110,6 +112,8 @@ function createDevConfig() {
     SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET,
     SLACK_WELCOME_USER_ID: process.env.SLACK_WELCOME_USER_ID || process.env.SLACK_USER_ID,
     SLACK_USER_ID: process.env.SLACK_USER_ID,
+    // Topic watcher
+    SLACK_CA_PRO_CHANNEL_ID: process.env.SLACK_CA_PRO_CHANNEL_ID,
 
     // App
     PORT: process.env.PORT || '3000',

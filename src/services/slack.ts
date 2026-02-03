@@ -1,7 +1,8 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { env } from '../config/env.js';
-import type { CallType } from '../types/index.js';
+import type { CallType, SlackPendingMetadata } from '../types/index.js';
+import type { MessageChannel, MessageType, ReminderTiming } from '../config/templates.js';
 
 const SLACK_API_BASE = 'https://slack.com/api';
 
@@ -415,4 +416,565 @@ export async function checkSlackConnection(): Promise<boolean> {
     console.error('Slack connection check failed:', error);
     return false;
   }
+}
+
+// ===========================================
+// Modal Functions
+// ===========================================
+
+/**
+ * Open a generic modal
+ */
+export async function openModal(
+  triggerId: string,
+  view: Record<string, unknown>
+): Promise<boolean> {
+  try {
+    const response = await slackClient.post('/views.open', {
+      trigger_id: triggerId,
+      view,
+    });
+
+    if (!response.data.ok) {
+      console.error('Failed to open modal:', response.data.error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error opening modal:', error);
+    return false;
+  }
+}
+
+/**
+ * Open a modal for custom message input (Set Message)
+ */
+export async function openSetMessageModal(
+  triggerId: string,
+  pendingId: string,
+  currentMessage: string,
+  metadata: SlackPendingMetadata
+): Promise<boolean> {
+  const view = buildSetMessageModal(pendingId, currentMessage, metadata);
+
+  try {
+    const response = await slackClient.post('/views.open', {
+      trigger_id: triggerId,
+      view,
+    });
+
+    if (!response.data.ok) {
+      console.error('Failed to open modal:', response.data.error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error opening modal:', error);
+    return false;
+  }
+}
+
+/**
+ * Build the Set Message modal view
+ */
+export function buildSetMessageModal(
+  pendingId: string,
+  currentMessage: string,
+  metadata: SlackPendingMetadata
+): Record<string, unknown> {
+  const channelLabel = metadata.channel === 'whatsapp' ? 'WhatsApp' :
+                       metadata.channel === 'email' ? 'Email' : 'Circle';
+  const typeLabel = metadata.messageType === 'reminder' ? 'Reminder' : 'Recap';
+
+  return {
+    type: 'modal',
+    callback_id: 'set_message_modal',
+    private_metadata: JSON.stringify(metadata),
+    title: {
+      type: 'plain_text',
+      text: `Edit ${channelLabel} Message`,
+      emoji: true,
+    },
+    submit: {
+      type: 'plain_text',
+      text: 'Preview',
+      emoji: true,
+    },
+    close: {
+      type: 'plain_text',
+      text: 'Cancel',
+      emoji: true,
+    },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${typeLabel} - ${channelLabel}*\nEdit the message below. Formatting and line breaks will be preserved.`,
+        },
+      },
+      {
+        type: 'divider',
+      },
+      {
+        type: 'input',
+        block_id: 'message_input_block',
+        label: {
+          type: 'plain_text',
+          text: 'Message Content',
+          emoji: true,
+        },
+        element: {
+          type: 'plain_text_input',
+          action_id: 'message_input',
+          multiline: true,
+          initial_value: currentMessage,
+          placeholder: {
+            type: 'plain_text',
+            text: 'Enter your custom message here...',
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Update a message in place
+ */
+export async function updateMessage(
+  channel: string,
+  messageTs: string,
+  text: string,
+  blocks?: unknown[]
+): Promise<boolean> {
+  try {
+    const payload: Record<string, unknown> = {
+      channel,
+      ts: messageTs,
+      text,
+    };
+
+    if (blocks) {
+      payload.blocks = blocks;
+    }
+
+    const response = await slackClient.post('/chat.update', payload);
+    return response.data.ok;
+  } catch (error) {
+    console.error('Error updating message:', error);
+    return false;
+  }
+}
+
+// ===========================================
+// New Block Builders for Bot Flow
+// ===========================================
+
+/**
+ * Build "Weekly or Monthly?" selection buttons
+ */
+export function buildCallTypeSelectionBlocks(topic: string): unknown[] {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `Got it! I'll create reminders for: *${topic}*\n\nIs this for a Weekly or Monthly call?`,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Weekly',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'select_weekly',
+          value: topic,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Monthly',
+            emoji: true,
+          },
+          action_id: 'select_monthly',
+          value: topic,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Cancel',
+            emoji: true,
+          },
+          action_id: 'cancel_reminder',
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build WhatsApp reminder blocks with Copy and Set Message buttons
+ */
+export function buildWhatsAppReminderBlocks(
+  message: string,
+  pendingId: string,
+  timing: ReminderTiming,
+  callType: CallType
+): unknown[] {
+  const timingLabel = timing === 'dayBefore' ? 'Day Before' : 'Day Of';
+  const encodedMessage = encodeURIComponent(message);
+  const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'https://autoweeklymonthlycalls-production.up.railway.app';
+  const copyUrl = `${baseUrl}/copy.html?text=${encodedMessage}`;
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*WhatsApp (${timingLabel})*`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: message,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '📋 Copy',
+            emoji: true,
+          },
+          url: copyUrl,
+          action_id: `copy_whatsapp_${pendingId}`,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build Email reminder blocks with Approve and Set Message buttons
+ */
+export function buildEmailReminderBlocks(
+  message: string,
+  pendingId: string,
+  timing: ReminderTiming,
+  callType: CallType
+): unknown[] {
+  const timingLabel = timing === 'dayBefore' ? 'Day Before' : 'Day Of';
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Email (${timingLabel})*`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✅ Approve to Send',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'approve_email',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build WhatsApp recap blocks with Copy and Set Message buttons
+ */
+export function buildWhatsAppRecapBlocks(
+  message: string,
+  pendingId: string
+): unknown[] {
+  const encodedMessage = encodeURIComponent(message);
+  const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'https://autoweeklymonthlycalls-production.up.railway.app';
+  const copyUrl = `${baseUrl}/copy.html?text=${encodedMessage}`;
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '*WhatsApp Recap*',
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '📋 Copy',
+            emoji: true,
+          },
+          url: copyUrl,
+          action_id: `copy_whatsapp_recap_${pendingId}`,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build Email recap blocks with Approve and Set Message buttons
+ */
+export function buildEmailRecapBlocks(
+  message: string,
+  pendingId: string
+): unknown[] {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '*Email Recap*',
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: message.length > 2900 ? message.substring(0, 2900) + '...' : message,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✅ Approve to Send',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'approve_email',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build Circle recap blocks with Approve and Set Message buttons
+ */
+export function buildCircleRecapBlocks(
+  message: string,
+  pendingId: string,
+  topic: string
+): unknown[] {
+  // Truncate for display if needed (Slack block text limit is 3000 chars)
+  const displayMessage = message.length > 2900 ? message.substring(0, 2900) + '...\n\n_(Message truncated for display)_' : message;
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Circle Post: ${topic}*`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: displayMessage,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✅ Approve to Post',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'approve_circle',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build a "Copied!" confirmation block (to replace original after copy)
+ */
+export function buildCopiedConfirmationBlocks(
+  originalMessage: string,
+  channel: 'whatsapp'
+): unknown[] {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*WhatsApp Message*\n📋 _Copied!_`,
+      },
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: originalMessage.length > 500 ? originalMessage.substring(0, 500) + '...' : originalMessage,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build an "Approved/Sent" confirmation block
+ */
+export function buildApprovedConfirmationBlocks(
+  channel: 'email' | 'circle',
+  originalMessage: string
+): unknown[] {
+  const channelLabel = channel === 'email' ? 'Email' : 'Circle Post';
+  const statusEmoji = '✅';
+  const statusText = channel === 'email' ? 'Sent!' : 'Posted!';
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${channelLabel}*\n${statusEmoji} _${statusText}_`,
+      },
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: originalMessage.length > 500 ? originalMessage.substring(0, 500) + '...' : originalMessage,
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build reminder thread header blocks
+ */
+export function buildReminderThreadHeader(timing: ReminderTiming): unknown[] {
+  const emoji = timing === 'dayBefore' ? '📅' : '🔔';
+  const label = timing === 'dayBefore' ? 'DAY BEFORE' : 'DAY OF';
+
+  return [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `${emoji} ${label} Reminders`,
+        emoji: true,
+      },
+    },
+    {
+      type: 'divider',
+    },
+  ];
 }
