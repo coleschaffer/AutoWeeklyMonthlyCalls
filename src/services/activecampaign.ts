@@ -146,14 +146,26 @@ export async function sendEmail(
 }
 
 /**
- * Send reminder email to the CA Pro list
+ * Send reminder email to the appropriate CA Pro list based on call type
  */
 export async function sendReminderEmail(
   subject: string,
-  body: string
+  body: string,
+  callType: 'weekly' | 'monthly'
 ): Promise<EmailSendResult> {
+  const listId = callType === 'monthly'
+    ? config.activeCampaignMonthlyListId
+    : config.activeCampaignWeeklyListId;
+
+  if (!listId || listId === 0) {
+    return {
+      success: false,
+      error: `No ActiveCampaign list configured for ${callType} calls`,
+    };
+  }
+
   return sendCampaign({
-    listId: config.activeCampaignListId,
+    listId,
     subject,
     body,
   });
@@ -165,7 +177,8 @@ export async function sendReminderEmail(
 export async function sendRecordingNotification(
   topic: string,
   description: string,
-  circleUrl: string
+  circleUrl: string,
+  callType: 'weekly' | 'monthly'
 ): Promise<EmailSendResult> {
   const subject = `New Recording: ${topic}`;
   const body = `
@@ -181,7 +194,7 @@ Best,
 The CA Pro Team
   `.trim();
 
-  return sendReminderEmail(subject, body);
+  return sendReminderEmail(subject, body, callType);
 }
 
 /**

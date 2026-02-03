@@ -22,7 +22,6 @@ const envSchema = z.object({
   // ActiveCampaign
   ACTIVECAMPAIGN_API_URL: z.string().url(),
   ACTIVECAMPAIGN_API_KEY: z.string().min(1),
-  ACTIVECAMPAIGN_LIST_ID: z.string().optional(), // Legacy - use AC_TM_LIST_ID and AC_BO_LIST_ID instead
   AC_TM_LIST_ID: z.string().optional(), // Training Mastery (weekly calls) list
   AC_BO_LIST_ID: z.string().optional(), // Business Owner (monthly calls) list
 
@@ -96,7 +95,6 @@ function createDevConfig() {
     // ActiveCampaign
     ACTIVECAMPAIGN_API_URL: process.env.ACTIVECAMPAIGN_API_URL || 'https://placeholder.api-us1.com',
     ACTIVECAMPAIGN_API_KEY: process.env.ACTIVECAMPAIGN_API_KEY || '',
-    ACTIVECAMPAIGN_LIST_ID: process.env.ACTIVECAMPAIGN_LIST_ID || '',
     AC_TM_LIST_ID: process.env.AC_TM_LIST_ID,
     AC_BO_LIST_ID: process.env.AC_BO_LIST_ID,
 
@@ -157,8 +155,7 @@ export const config = {
 
   circleSpaceId: parseInt(env.CIRCLE_SPACE_ID, 10),
   circleCommunityId: parseInt(env.CIRCLE_COMMUNITY_ID, 10),
-  activeCampaignListId: parseInt(env.ACTIVECAMPAIGN_LIST_ID || '0', 10),
-  // Specific lists for different call types
-  activeCampaignWeeklyListId: parseInt(env.AC_TM_LIST_ID || env.ACTIVECAMPAIGN_LIST_ID || '0', 10),
-  activeCampaignMonthlyListId: parseInt(env.AC_BO_LIST_ID || env.ACTIVECAMPAIGN_LIST_ID || '0', 10),
+  // ActiveCampaign lists for different call types (no fallback - must be explicitly set)
+  activeCampaignWeeklyListId: env.AC_TM_LIST_ID ? parseInt(env.AC_TM_LIST_ID, 10) : 0,
+  activeCampaignMonthlyListId: env.AC_BO_LIST_ID ? parseInt(env.AC_BO_LIST_ID, 10) : 0,
 };

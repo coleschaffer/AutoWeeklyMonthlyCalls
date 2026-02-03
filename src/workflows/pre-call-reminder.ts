@@ -251,7 +251,8 @@ async function sendReminder(
     console.log(`Sending ${callType} ${reminderType} email reminder...`);
     const emailResult = await activeCampaign.sendReminderEmail(
       emailTemplate.subject,
-      emailTemplate.body
+      emailTemplate.body,
+      callType
     );
 
     if (emailResult.success) {
