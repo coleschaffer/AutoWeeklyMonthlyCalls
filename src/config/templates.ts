@@ -6,15 +6,18 @@ import type { CallType } from '../types/index.js';
 
 export type MessageChannel = 'whatsapp' | 'email' | 'circle';
 export type MessageType = 'reminder' | 'recap';
-export type ReminderTiming = 'dayBefore' | 'dayOf';
+export type ReminderTiming = 'weekBefore' | 'dayBefore' | 'dayOf';
 
 // Template IDs for lookup
 export const TEMPLATE_IDS = {
   // Reminders
   WHATSAPP_WEEKLY_REMINDER_DAY_BEFORE: 'whatsapp-weekly-reminder-dayBefore',
   WHATSAPP_WEEKLY_REMINDER_DAY_OF: 'whatsapp-weekly-reminder-dayOf',
+  WHATSAPP_MONTHLY_REMINDER_WEEK_BEFORE: 'whatsapp-monthly-reminder-weekBefore',
   WHATSAPP_MONTHLY_REMINDER_DAY_OF: 'whatsapp-monthly-reminder-dayOf',
+  EMAIL_WEEKLY_REMINDER_DAY_BEFORE: 'email-weekly-reminder-dayBefore',
   EMAIL_WEEKLY_REMINDER_DAY_OF: 'email-weekly-reminder-dayOf',
+  EMAIL_MONTHLY_REMINDER_WEEK_BEFORE: 'email-monthly-reminder-weekBefore',
   EMAIL_MONTHLY_REMINDER_DAY_OF: 'email-monthly-reminder-dayOf',
   // Recaps
   WHATSAPP_WEEKLY_RECAP: 'whatsapp-weekly-recap',
@@ -33,6 +36,7 @@ export interface MessageTemplate {
   callType: CallType;
   timing?: ReminderTiming;
   template: string;
+  subject?: string; // Email subject line
 }
 
 // ===========================================
@@ -64,11 +68,26 @@ export const WHATSAPP_WEEKLY_REMINDER_DAY_OF: MessageTemplate = {
   type: 'reminder',
   callType: 'weekly',
   timing: 'dayOf',
-  template: `📣 Today's Weekly Training Call starts @ {{time}} EST!
+  template: `📣 Today's Weekly Training Call @ {{time}} EST!
 
 {{description}}
 
 Join Here: {{zoomLink}}`,
+};
+
+export const WHATSAPP_MONTHLY_REMINDER_WEEK_BEFORE: MessageTemplate = {
+  id: 'whatsapp-monthly-reminder-weekBefore',
+  name: 'WhatsApp Monthly Reminder (Week Before)',
+  channel: 'whatsapp',
+  type: 'reminder',
+  callType: 'monthly',
+  timing: 'weekBefore',
+  template: `📣 Heads up! Our Monthly Business Owner Call is coming up next {{day}}!
+⏰ {{day}}, {{date}} @ {{time}} EST
+
+{{description}}
+
+Mark your calendar and join here: {{zoomLink}}`,
 };
 
 export const WHATSAPP_MONTHLY_REMINDER_DAY_OF: MessageTemplate = {
@@ -78,7 +97,7 @@ export const WHATSAPP_MONTHLY_REMINDER_DAY_OF: MessageTemplate = {
   type: 'reminder',
   callType: 'monthly',
   timing: 'dayOf',
-  template: `📣 Today's Monthly Business Owner Call starts @ {{time}} EST!
+  template: `📣 Today's Monthly Business Owner Call @ {{time}} EST!
 
 {{description}}
 
@@ -89,6 +108,26 @@ Join Here: {{zoomLink}}`,
 // Email Reminder Templates
 // ===========================================
 
+export const EMAIL_WEEKLY_REMINDER_DAY_BEFORE: MessageTemplate = {
+  id: 'email-weekly-reminder-dayBefore',
+  name: 'Email Weekly Reminder (Day Before)',
+  channel: 'email',
+  type: 'reminder',
+  callType: 'weekly',
+  timing: 'dayBefore',
+  subject: 'CA Pro Weekly Call Tomorrow',
+  template: `Hey [first name],
+
+Quick reminder - tomorrow's Weekly Training Call will be at {{time}} EST.
+
+{{description}}
+
+Join here: {{zoomLink}}
+
+See you there,
+CA PRO Team`,
+};
+
 export const EMAIL_WEEKLY_REMINDER_DAY_OF: MessageTemplate = {
   id: 'email-weekly-reminder-dayOf',
   name: 'Email Weekly Reminder (Day Of)',
@@ -96,13 +135,32 @@ export const EMAIL_WEEKLY_REMINDER_DAY_OF: MessageTemplate = {
   type: 'reminder',
   callType: 'weekly',
   timing: 'dayOf',
+  subject: 'CA Pro Weekly Call Today',
   template: `Hey [first name],
 
-Quick reminder - for today's Weekly Training Call, Stefan's doing {{topic}}.
+Quick reminder - today's Weekly Training Call will be at {{time}} EST.
 
 {{description}}
 
-The call is today @ {{time}} EST.
+Join here: {{zoomLink}}
+
+See you there,
+CA PRO Team`,
+};
+
+export const EMAIL_MONTHLY_REMINDER_WEEK_BEFORE: MessageTemplate = {
+  id: 'email-monthly-reminder-weekBefore',
+  name: 'Email Monthly Reminder (Week Before)',
+  channel: 'email',
+  type: 'reminder',
+  callType: 'monthly',
+  timing: 'weekBefore',
+  subject: 'CA Pro Monthly Call Soon',
+  template: `Hey [first name],
+
+Quick reminder - our Monthly Business Owner Call will be {{day}}, {{date}} at {{time}} EST.
+
+{{description}}
 
 Join here: {{zoomLink}}
 
@@ -117,9 +175,10 @@ export const EMAIL_MONTHLY_REMINDER_DAY_OF: MessageTemplate = {
   type: 'reminder',
   callType: 'monthly',
   timing: 'dayOf',
+  subject: 'CA Pro Monthly Call Today',
   template: `Hey [first name],
 
-Just a quick reminder that our Monthly Business Owner Call with Stefan kicks off today @ {{time}} EST.
+Quick reminder - today's Monthly Business Owner Call will be at {{time}} EST.
 
 {{description}}
 
@@ -184,6 +243,7 @@ export const EMAIL_WEEKLY_RECAP: MessageTemplate = {
   channel: 'email',
   type: 'recap',
   callType: 'weekly',
+  subject: 'CA Pro Weekly Call Recap',
   template: `Hey [first name],
 
 This week's training call is now posted in Circle.
@@ -213,6 +273,7 @@ export const EMAIL_MONTHLY_RECAP: MessageTemplate = {
   channel: 'email',
   type: 'recap',
   callType: 'monthly',
+  subject: 'CA Pro Monthly Call Recap',
   template: `Hey [first name],
 
 This month's Business Owner call is now posted in Circle.
@@ -302,13 +363,16 @@ export function getReminderTemplates(
   if (callType === 'weekly') {
     if (timing === 'dayBefore') {
       templates.whatsapp = WHATSAPP_WEEKLY_REMINDER_DAY_BEFORE;
-      // No email day-before template
+      templates.email = EMAIL_WEEKLY_REMINDER_DAY_BEFORE;
     } else if (timing === 'dayOf') {
       templates.whatsapp = WHATSAPP_WEEKLY_REMINDER_DAY_OF;
       templates.email = EMAIL_WEEKLY_REMINDER_DAY_OF;
     }
   } else if (callType === 'monthly') {
-    if (timing === 'dayOf') {
+    if (timing === 'weekBefore') {
+      templates.whatsapp = WHATSAPP_MONTHLY_REMINDER_WEEK_BEFORE;
+      templates.email = EMAIL_MONTHLY_REMINDER_WEEK_BEFORE;
+    } else if (timing === 'dayOf') {
       templates.whatsapp = WHATSAPP_MONTHLY_REMINDER_DAY_OF;
       templates.email = EMAIL_MONTHLY_REMINDER_DAY_OF;
     }
@@ -367,6 +431,7 @@ export function getAllTemplates(callType: CallType): {
 export interface ReminderContext {
   topic: string;
   description: string;
+  presenter?: string; // e.g., "Stefan" or "Angela"
   day?: string; // e.g., "Tuesday"
   date?: string; // e.g., "February 4, 2026"
   time: string; // e.g., "1 PM"

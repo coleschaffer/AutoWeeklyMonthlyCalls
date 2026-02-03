@@ -231,7 +231,7 @@ export interface WebhookValidationResult {
 // ---- Slack Bot Flow Types ----
 export type SlackMessageChannel = 'whatsapp' | 'email' | 'circle';
 export type SlackMessageType = 'reminder' | 'recap';
-export type SlackReminderTiming = 'dayBefore' | 'dayOf';
+export type SlackReminderTiming = 'weekBefore' | 'dayBefore' | 'dayOf';
 
 export interface SlackPendingMetadata {
   pendingId: string;

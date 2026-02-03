@@ -112,17 +112,20 @@ export async function handleAppMention(event: {
       : callType === 'weekly' ? '1:00 PM' : '2:00 PM';
 
     // Generate reminder description using Claude (with presenter and context)
+    console.log(`[Mention Handler] Generating description with presenter: "${parsed.presenter}"`);
     const description = await claude.generateReminderDescription(
       topicInfo.topic,
       callType,
       parsed.presenter,
       parsed.extraContext
     );
+    console.log(`[Mention Handler] Generated description: "${description}"`);
 
     // Build context for template rendering
     const reminderContext: ReminderContext = {
       topic: topicInfo.topic,
       description,
+      presenter: parsed.presenter,
       time: callTime,
       zoomLink,
       day: zoomInfo?.startTime
@@ -162,6 +165,98 @@ export async function handleAppMention(event: {
           '📅 DAY BEFORE Reminder (WhatsApp)',
           dayBeforeMessage,
           dayBeforePendingId
+        );
+      }
+
+      // Generate Day Before reminder (Email) - only for weekly
+      if (dayBeforeTemplates.email) {
+        const dayBeforeEmailMessage = renderTemplate(dayBeforeTemplates.email, reminderContext);
+
+        const dayBeforeEmailPendingId = storePending({
+          type: 'reminder',
+          channel: 'email',
+          callType,
+          timing: 'dayBefore',
+          message: dayBeforeEmailMessage,
+          metadata: {
+            topic: topicInfo.topic,
+            description,
+            zoomLink,
+            callTime,
+            subject: dayBeforeTemplates.email.subject,
+          },
+          slackMessageTs: ts,
+          slackChannel: channel,
+        });
+
+        await postEmailReminder(
+          channel,
+          ts,
+          '📧 DAY BEFORE Reminder (Email)',
+          dayBeforeEmailMessage,
+          dayBeforeEmailPendingId
+        );
+      }
+    }
+
+    // Generate Week Before reminder - only for monthly
+    if (callType === 'monthly') {
+      const weekBeforeTemplates = getReminderTemplates(callType, 'weekBefore');
+
+      if (weekBeforeTemplates.whatsapp) {
+        const weekBeforeMessage = renderTemplate(weekBeforeTemplates.whatsapp, reminderContext);
+
+        const weekBeforePendingId = storePending({
+          type: 'reminder',
+          channel: 'whatsapp',
+          callType,
+          timing: 'weekBefore',
+          message: weekBeforeMessage,
+          metadata: {
+            topic: topicInfo.topic,
+            description,
+            zoomLink,
+            callTime,
+          },
+          slackMessageTs: ts,
+          slackChannel: channel,
+        });
+
+        await postWhatsAppReminder(
+          channel,
+          ts,
+          '📅 WEEK BEFORE Reminder (WhatsApp)',
+          weekBeforeMessage,
+          weekBeforePendingId
+        );
+      }
+
+      if (weekBeforeTemplates.email) {
+        const weekBeforeEmailMessage = renderTemplate(weekBeforeTemplates.email, reminderContext);
+
+        const weekBeforeEmailPendingId = storePending({
+          type: 'reminder',
+          channel: 'email',
+          callType,
+          timing: 'weekBefore',
+          message: weekBeforeEmailMessage,
+          metadata: {
+            topic: topicInfo.topic,
+            description,
+            zoomLink,
+            callTime,
+            subject: weekBeforeTemplates.email.subject,
+          },
+          slackMessageTs: ts,
+          slackChannel: channel,
+        });
+
+        await postEmailReminder(
+          channel,
+          ts,
+          '📧 WEEK BEFORE Reminder (Email)',
+          weekBeforeEmailMessage,
+          weekBeforeEmailPendingId
         );
       }
     }
@@ -213,6 +308,7 @@ export async function handleAppMention(event: {
           description,
           zoomLink,
           callTime,
+          subject: dayOfTemplates.email.subject,
         },
         slackMessageTs: ts,
         slackChannel: channel,
@@ -275,21 +371,28 @@ function parseTopicMessage(text: string): {
     extraContext = dashMatch[2].trim();
 
     // Try to detect if someone else is presenting
-    // Look for patterns like "Angela is presenting", "with Angela", "Angela running", etc.
+    // Look for patterns like "Angela is presenting", "with Angela", "Kevin is running this", etc.
+    console.log(`[Mention Handler] Parsing extraContext: "${extraContext}"`);
+
     const presenterPatterns = [
-      /^(\w+)\s+(?:is\s+)?(?:presenting|running|hosting|leading|doing)/i,
+      /^(\w+)\s+is\s+(?:presenting|running|hosting|leading|doing|covering)/i,
+      /^(\w+)\s+(?:presenting|running|hosting|leading|doing|covering)/i,
       /^(?:with|featuring|by)\s+(\w+)/i,
       /^(\w+)\s+(?:will\s+)?(?:cover|present|run|host|lead|do)/i,
+      /^(\w+)\s+is\s+/i, // Catch "Kevin is running this" style - simpler pattern
     ];
 
-    for (const pattern of presenterPatterns) {
+    for (let i = 0; i < presenterPatterns.length; i++) {
+      const pattern = presenterPatterns[i];
       const match = extraContext.match(pattern);
+      console.log(`[Mention Handler] Pattern ${i}: ${pattern} -> match: ${JSON.stringify(match)}`);
       if (match && match[1]) {
         // Check if it's a name (capitalized, not a common word)
         const possibleName = match[1];
-        const commonWords = ['this', 'that', 'the', 'she', 'he', 'they', 'it', 'we', 'her', 'his'];
+        const commonWords = ['this', 'that', 'the', 'she', 'he', 'they', 'it', 'we', 'her', 'his', 'i', 'a', 'an'];
         if (!commonWords.includes(possibleName.toLowerCase()) && /^[A-Z]/.test(possibleName)) {
           presenter = possibleName;
+          console.log(`[Mention Handler] Detected presenter: ${presenter}`);
           break;
         }
       }

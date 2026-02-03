@@ -341,30 +341,33 @@ export async function generateReminderDescription(
   const typeLabel = callType === 'weekly' ? 'Weekly Training Call' : 'Monthly Business Owner Call';
   const contextNote = extraContext ? `\n\nAdditional context provided: "${extraContext}"` : '';
 
+  console.log(`[Claude] Generating description for presenter: "${presenter}", topic: "${topic}"`);
+
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-20250514',
     max_tokens: 150,
     messages: [
       {
         role: 'user',
         content: `Write a single compelling sentence (15-25 words) describing what attendees will learn from a CA Pro ${typeLabel} about "${topic}".
 
-The presenter is: ${presenter}${contextNote}
+IMPORTANT: The presenter is "${presenter}" (NOT Stefan unless that's who is specified).${contextNote}
 
 CRITICAL Rules:
-- Start with "${presenter}" as the subject: "${presenter} shares...", "${presenter} breaks down...", "${presenter} walks through..."
+- YOU MUST start with "${presenter}" as the subject using FUTURE TENSE: "${presenter} will share...", "${presenter} will break down...", "${presenter} will walk through..."
+- Use future tense verbs (will share, will break down, will walk through, will cover, will reveal)
+- NEVER use "Stefan" unless the presenter IS Stefan
 - DO NOT invent specific details not mentioned (no made-up numbers, lists, or frameworks)
 - Be specific about the value without making things up
 - Don't use generic phrases like "learn about" or "discuss"
 - Don't mention the call type or time
-- Keep it genuine - only reference what's actually provided
 
-Example format:
-- "Copy Chief Checklist" → "Stefan walks through his personal checklist for evaluating copy quality before any campaign goes live."
-- "Email Funnel Breakdown" → "Stefan breaks down a high-converting email funnel piece by piece, explaining what makes each element work."
-- "Q&A and Hot Seats" → "Stefan answers your copy questions live and diagnoses real funnels from members."
+Example outputs (using the presenter name "${presenter}"):
+- "${presenter} will walk through a systematic checklist for evaluating copy quality before any campaign goes live."
+- "${presenter} will break down a high-converting email funnel piece by piece, explaining what makes each element work."
+- "${presenter} will share actionable strategies for writing hooks that grab attention and compel readers to keep reading."
 
-Now write a description for: "${topic}"`,
+Now write a description for topic "${topic}" with presenter "${presenter}":`,
       },
     ],
   });

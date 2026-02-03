@@ -251,14 +251,15 @@ async function sendFollowUpNotifications(
     };
   }
 
-  // Send to Slack for approval (don't auto-send anymore)
+  // Send to Slack #ca-pro channel for approval (don't auto-send anymore)
   try {
-    if (slack.isSlackConfigured() && env.SLACK_WELCOME_USER_ID) {
-      const adminChannel = await slack.openDmChannel(env.SLACK_WELCOME_USER_ID);
+    const caProChannel = env.SLACK_CA_PRO_CHANNEL_ID;
+    const adminUserId = env.SLACK_WELCOME_USER_ID;
 
-      // Post header
-      await slack.postMessage(
-        adminChannel,
+    if (slack.isSlackConfigured() && caProChannel) {
+      // Post header message to #ca-pro channel (this starts the thread)
+      const headerResult = await slack.postMessage(
+        caProChannel,
         `🎬 New ${callType === 'weekly' ? 'Weekly' : 'Monthly'} Recap Ready for Review`,
         [
           {
@@ -282,49 +283,63 @@ async function sendFollowUpNotifications(
         ]
       );
 
-      // Store and post Circle recap (needs approval to post)
+      // Get the thread timestamp from the header message
+      const threadTs = headerResult?.ts;
+
+      // Store and post Circle recap (needs approval to post) - as thread reply
       const circlePendingId = pendingStore.storePending({
         type: 'recap',
         channel: 'circle',
         callType,
         message: recaps.circle,
         metadata: { topic, circleUrl, youtubeUrl, youtubeId },
-        slackMessageTs: '',
-        slackChannel: adminChannel,
+        slackMessageTs: threadTs || '',
+        slackChannel: caProChannel,
       });
 
       const circleBlocks = slack.buildCircleRecapBlocks(recaps.circle, circlePendingId, topic);
-      await slack.postMessage(adminChannel, 'Circle Recap', circleBlocks);
+      await slack.postMessage(caProChannel, 'Circle Recap', circleBlocks, undefined, threadTs);
 
-      // Store and post WhatsApp recap (copy only)
+      // Store and post WhatsApp recap (copy only) - as thread reply
       const whatsappPendingId = pendingStore.storePending({
         type: 'recap',
         channel: 'whatsapp',
         callType,
         message: recaps.whatsapp,
         metadata: { topic, circleUrl },
-        slackMessageTs: '',
-        slackChannel: adminChannel,
+        slackMessageTs: threadTs || '',
+        slackChannel: caProChannel,
       });
 
       const whatsappBlocks = slack.buildWhatsAppRecapBlocks(recaps.whatsapp, whatsappPendingId);
-      await slack.postMessage(adminChannel, 'WhatsApp Recap', whatsappBlocks);
+      await slack.postMessage(caProChannel, 'WhatsApp Recap', whatsappBlocks, undefined, threadTs);
 
-      // Store and post Email recap (needs approval to send)
+      // Store and post Email recap (needs approval to send) - as thread reply
       const emailPendingId = pendingStore.storePending({
         type: 'recap',
         channel: 'email',
         callType,
         message: recaps.email,
         metadata: { topic, circleUrl },
-        slackMessageTs: '',
-        slackChannel: adminChannel,
+        slackMessageTs: threadTs || '',
+        slackChannel: caProChannel,
       });
 
       const emailBlocks = slack.buildEmailRecapBlocks(recaps.email, emailPendingId);
-      await slack.postMessage(adminChannel, 'Email Recap', emailBlocks);
+      await slack.postMessage(caProChannel, 'Email Recap', emailBlocks, undefined, threadTs);
 
-      console.log('Slack recap messages sent for approval');
+      // Tag admin user at the end of the thread
+      if (adminUserId) {
+        await slack.postMessage(
+          caProChannel,
+          `<@${adminUserId}> Recaps are ready above! ☝️`,
+          undefined,
+          undefined,
+          threadTs
+        );
+      }
+
+      console.log('Slack recap messages sent to #ca-pro channel for approval');
     }
   } catch (error) {
     console.error('Slack notification failed:', error);

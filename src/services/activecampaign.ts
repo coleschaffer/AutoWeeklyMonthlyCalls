@@ -238,7 +238,7 @@ The CA Pro Team
 }
 
 /**
- * Format plain text email as HTML
+ * Format plain text email as HTML with header image
  */
 function formatEmailHtml(plainText: string): string {
   // Convert newlines to <br> and wrap in basic HTML
@@ -247,6 +247,12 @@ function formatEmailHtml(plainText: string): string {
     .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
     .join('');
 
+  // Header image URL from our public folder
+  const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'https://autoweeklymonthlycalls-production.up.railway.app';
+  const headerImageUrl = `${baseUrl}/ca-pro-header.avif`;
+
   return `
 <!DOCTYPE html>
 <html>
@@ -254,8 +260,13 @@ function formatEmailHtml(plainText: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  ${htmlContent}
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0;">
+  <div style="text-align: center; margin-bottom: 20px;">
+    <img src="${headerImageUrl}" alt="CA Pro" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
+  </div>
+  <div style="padding: 0 20px 20px 20px;">
+    ${htmlContent}
+  </div>
 </body>
 </html>
   `.trim();

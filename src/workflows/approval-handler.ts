@@ -24,16 +24,25 @@ export async function handleEmailApproval(
   }
 
   try {
-    // Determine subject line based on type
-    let subject = '';
-    if (pending.type === 'reminder') {
-      const callLabel = pending.callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner';
-      const timingLabel = pending.timing === 'dayBefore' ? 'Tomorrow' : 'Today';
-      subject = `${timingLabel}: CA Pro ${callLabel} Call`;
-    } else {
-      // Recap
-      const topic = (pending.metadata.topic as string) || 'Training';
-      subject = `New Recording: ${topic}`;
+    // Use subject from metadata if available, otherwise generate one
+    let subject = pending.metadata.subject as string | undefined;
+
+    if (!subject) {
+      if (pending.type === 'reminder') {
+        // Fallback subjects for reminders
+        if (pending.callType === 'weekly') {
+          subject = pending.timing === 'dayBefore'
+            ? 'CA Pro Weekly Call Tomorrow'
+            : 'CA Pro Weekly Call Today';
+        } else {
+          subject = 'CA Pro Monthly Call Today';
+        }
+      } else {
+        // Fallback subjects for recaps
+        subject = pending.callType === 'weekly'
+          ? 'CA Pro Weekly Call Recap'
+          : 'CA Pro Monthly Call Recap';
+      }
     }
 
     // Determine the correct list ID based on call type
