@@ -7,7 +7,7 @@ import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as slack from '../services/slack.js';
 import * as pendingStore from '../services/pending-store.js';
-import { getReminderTopic, upsertCallHistory } from '../services/pending-store.js';
+import { getReminderTopic, storeReminderTopic, upsertCallHistory } from '../services/pending-store.js';
 import { detectCallType } from '../config/schedule.js';
 import { env } from '../config/env.js';
 import {
@@ -390,15 +390,27 @@ async function sendFollowUpNotifications(
 
 /**
  * Manual trigger for processing (for retries or manual runs)
+ * @param meetingId - Zoom meeting ID
+ * @param overrideTopic - Optional topic to use instead of extracting from meeting title
  */
 export async function processRecordingManual(
-  meetingId: string
+  meetingId: string,
+  overrideTopic?: string
 ): Promise<PostCallProcessResult> {
   console.log(`Manual processing triggered for meeting: ${meetingId}`);
+  if (overrideTopic) {
+    console.log(`Using override topic: ${overrideTopic}`);
+  }
 
   try {
     // Get recording details
     const recording = await zoom.getRecording(meetingId);
+
+    // If override topic provided, store it so processRecording picks it up
+    if (overrideTopic) {
+      const callType = detectCallType(recording.topic);
+      await storeReminderTopic(callType, recording.startTime, overrideTopic);
+    }
 
     // Create a mock webhook payload
     const mockPayload: ZoomWebhookPayload = {

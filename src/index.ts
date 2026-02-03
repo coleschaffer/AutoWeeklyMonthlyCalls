@@ -123,7 +123,7 @@ app.post('/webhooks/zoom', async (req: Request, res: Response) => {
 // ===========================================
 
 app.post('/api/process-call', async (req: Request, res: Response) => {
-  const { meetingId } = req.query;
+  const { meetingId, topic } = req.query;
 
   if (!meetingId || typeof meetingId !== 'string') {
     return res.status(400).json({
@@ -133,11 +133,12 @@ app.post('/api/process-call', async (req: Request, res: Response) => {
     });
   }
 
-  console.log(`Manual processing triggered for: ${meetingId}`);
+  const overrideTopic = typeof topic === 'string' ? topic : undefined;
+  console.log(`Manual processing triggered for: ${meetingId}${overrideTopic ? ` with topic: ${overrideTopic}` : ''}`);
 
   try {
     const { processRecordingManual } = await import('./workflows/post-call-process.js');
-    processRecordingManual(meetingId)
+    processRecordingManual(meetingId, overrideTopic)
       .then(result => {
         console.log(`Manual processing result:`, result);
       })
@@ -152,6 +153,7 @@ app.post('/api/process-call', async (req: Request, res: Response) => {
     success: true,
     message: 'Processing started',
     meetingId,
+    topic: overrideTopic,
     timestamp: new Date().toISOString(),
   });
 });
