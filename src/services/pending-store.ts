@@ -230,12 +230,104 @@ export function getStoreStats(): {
 }
 
 // ===========================================
+// Topic Store - Links reminder topics to recaps
+// ===========================================
+
+// Store topics by call type and date (YYYY-MM-DD format)
+const reminderTopics: Map<string, { topic: string; presenter: string; storedAt: Date }> = new Map();
+
+/**
+ * Generate a topic store key from call type and date
+ */
+function getTopicKey(callType: 'weekly' | 'monthly', date: Date): string {
+  const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+  return `${callType}:${dateStr}`;
+}
+
+/**
+ * Store the topic used for a reminder (called when generating reminders)
+ * This allows recaps to use the same topic later
+ */
+export function storeReminderTopic(
+  callType: 'weekly' | 'monthly',
+  callDate: Date,
+  topic: string,
+  presenter: string = 'Stefan'
+): void {
+  const key = getTopicKey(callType, callDate);
+  reminderTopics.set(key, { topic, presenter, storedAt: new Date() });
+  console.log(`Stored reminder topic: ${key} -> "${topic}" (presenter: ${presenter})`);
+}
+
+/**
+ * Get the topic that was used for a reminder
+ * Returns null if no reminder topic was stored for this call
+ */
+export function getReminderTopic(
+  callType: 'weekly' | 'monthly',
+  callDate: Date
+): { topic: string; presenter: string } | null {
+  const key = getTopicKey(callType, callDate);
+  const stored = reminderTopics.get(key);
+
+  if (stored) {
+    console.log(`Found stored reminder topic for ${key}: "${stored.topic}"`);
+    return { topic: stored.topic, presenter: stored.presenter };
+  }
+
+  // Also check yesterday and tomorrow in case of timezone differences
+  const yesterday = new Date(callDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = getTopicKey(callType, yesterday);
+  const yesterdayStored = reminderTopics.get(yesterdayKey);
+  if (yesterdayStored) {
+    console.log(`Found stored reminder topic for ${yesterdayKey}: "${yesterdayStored.topic}"`);
+    return { topic: yesterdayStored.topic, presenter: yesterdayStored.presenter };
+  }
+
+  const tomorrow = new Date(callDate);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowKey = getTopicKey(callType, tomorrow);
+  const tomorrowStored = reminderTopics.get(tomorrowKey);
+  if (tomorrowStored) {
+    console.log(`Found stored reminder topic for ${tomorrowKey}: "${tomorrowStored.topic}"`);
+    return { topic: tomorrowStored.topic, presenter: tomorrowStored.presenter };
+  }
+
+  console.log(`No stored reminder topic found for ${key}`);
+  return null;
+}
+
+/**
+ * Clear old reminder topics (older than 7 days)
+ */
+export function cleanupOldTopics(): number {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7);
+
+  let cleaned = 0;
+  for (const [key, data] of reminderTopics.entries()) {
+    if (data.storedAt < cutoff) {
+      reminderTopics.delete(key);
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`Cleaned up ${cleaned} old reminder topics`);
+  }
+
+  return cleaned;
+}
+
+// ===========================================
 // Auto-cleanup on module load
 // ===========================================
 
 // Start periodic cleanup
 setInterval(() => {
   cleanupExpired();
+  cleanupOldTopics();
 }, CLEANUP_INTERVAL_MS);
 
 console.log('Pending message store initialized');

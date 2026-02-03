@@ -2,7 +2,7 @@ import * as slack from '../services/slack.js';
 import * as claude from '../services/claude.js';
 import * as zoom from '../services/zoom.js';
 import { env } from '../config/env.js';
-import { storePending } from '../services/pending-store.js';
+import { storePending, storeReminderTopic } from '../services/pending-store.js';
 import {
   getReminderTemplates,
   renderTemplate,
@@ -106,6 +106,12 @@ export async function handleAppMention(event: {
   try {
     // Fetch Zoom link
     const zoomInfo = await zoom.getJoinUrlForNextCall(callType);
+
+    // Store the topic for later use by recap generation
+    // This links the reminder topic to the recording webhook
+    if (zoomInfo?.startTime) {
+      storeReminderTopic(callType, zoomInfo.startTime, topicInfo.topic, parsed.presenter);
+    }
     const zoomLink = zoomInfo?.joinUrl || 'https://us06web.zoom.us/j/your-meeting-id';
     const callTime = zoomInfo?.startTime
       ? formatCallTime(zoomInfo.startTime)

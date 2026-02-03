@@ -7,6 +7,7 @@ import * as claude from '../services/claude.js';
 import * as activeCampaign from '../services/activecampaign.js';
 import * as slack from '../services/slack.js';
 import * as pendingStore from '../services/pending-store.js';
+import { getReminderTopic } from '../services/pending-store.js';
 import { detectCallType } from '../config/schedule.js';
 import { env } from '../config/env.js';
 import {
@@ -40,12 +41,17 @@ export async function processRecording(
     // Step 1: Get recording details from Zoom
     console.log('Step 1: Fetching recording details...');
     const recording = await zoom.getRecording(meetingId);
-    const topic = zoom.extractTopicFromMeeting(rawTopic);
     const callType = detectCallType(rawTopic);
     const dateStr = formatDateForFile(recording.startTime);
 
+    // Try to get the topic from the stored reminder first
+    // This ensures recaps use the same topic that was used for reminders
+    const storedTopic = getReminderTopic(callType, recording.startTime);
+    const topic = storedTopic?.topic || zoom.extractTopicFromMeeting(rawTopic);
+
     console.log(`Detected call type: ${callType}`);
-    console.log(`Extracted topic: ${topic}`);
+    console.log(`Topic source: ${storedTopic ? 'stored reminder' : 'extracted from meeting title'}`);
+    console.log(`Topic: ${topic}`);
 
     // Step 2: Download and parse transcript
     console.log('Step 2: Processing transcript...');
@@ -68,6 +74,12 @@ export async function processRecording(
     // Step 3: Download video
     console.log('Step 3: Downloading video...');
     const videoPath = `${TEMP_DIR}/${dateStr}_recording.mp4`;
+
+    // Ensure the temp directory exists
+    const fs = await import('fs');
+    await fs.promises.mkdir(TEMP_DIR, { recursive: true });
+    console.log(`Ensured temp directory exists: ${TEMP_DIR}`);
+
     await zoom.downloadRecording(recording.videoUrl, videoPath);
     console.log(`Video downloaded to: ${videoPath}`);
 
