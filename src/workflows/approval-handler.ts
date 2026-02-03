@@ -18,7 +18,7 @@ export async function handleEmailApproval(
   channel: string,
   messageTs: string
 ): Promise<{ success: boolean; error?: string }> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     return { success: false, error: 'Message not found or expired' };
@@ -71,7 +71,7 @@ export async function handleEmailApproval(
     await slack.updateMessage(channel, messageTs, '✅ Email sent!', confirmBlocks);
 
     // Clean up pending message
-    pendingStore.deletePending(pendingId);
+    await pendingStore.deletePending(pendingId);
 
     console.log(`Email approved and sent: ${pendingId}`);
     return { success: true };
@@ -92,7 +92,7 @@ export async function handleCircleApproval(
   channel: string,
   messageTs: string
 ): Promise<{ success: boolean; error?: string; postUrl?: string }> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     return { success: false, error: 'Message not found or expired' };
@@ -123,7 +123,7 @@ export async function handleCircleApproval(
     await slack.updateMessage(channel, messageTs, `✅ Posted to Circle!\n${result.url}`, confirmBlocks);
 
     // Clean up pending message
-    pendingStore.deletePending(pendingId);
+    await pendingStore.deletePending(pendingId);
 
     console.log(`Circle post approved and created: ${pendingId} -> ${result.url}`);
     return { success: true, postUrl: result.url };
@@ -143,7 +143,7 @@ export async function handleSetMessage(
   pendingId: string,
   triggerId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     return { success: false, error: 'Message not found or expired' };
@@ -182,7 +182,7 @@ export async function handleEditWithAi(
   pendingId: string,
   triggerId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     return { success: false, error: 'Message not found or expired' };
@@ -229,13 +229,13 @@ export async function handleModalSubmission(
   }
 ): Promise<{ success: boolean; error?: string }> {
   // Update the pending message
-  const updated = pendingStore.updatePendingMessage(pendingId, newMessage);
+  const updated = await pendingStore.updatePendingMessage(pendingId, newMessage);
 
   if (!updated) {
     return { success: false, error: 'Message not found or expired' };
   }
 
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
   if (!pending) {
     return { success: false, error: 'Message not found after update' };
   }
@@ -315,7 +315,7 @@ export async function handleAiEditModalSubmission(
     originalTopic?: string;
   }
 ): Promise<{ success: boolean; error?: string }> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     return { success: false, error: 'Message not found or expired' };
@@ -336,7 +336,7 @@ export async function handleAiEditModalSubmission(
     );
 
     // Update the pending message
-    pendingStore.updatePendingMessage(pendingId, regeneratedMessage);
+    await pendingStore.updatePendingMessage(pendingId, regeneratedMessage);
 
     // Build the appropriate blocks for the regenerated message
     let blocks: unknown[];
@@ -406,7 +406,7 @@ export async function markAsCopied(
   channel: string,
   messageTs: string
 ): Promise<void> {
-  const pending = pendingStore.getPending(pendingId);
+  const pending = await pendingStore.getPendingWithFallback(pendingId);
 
   if (!pending) {
     console.log(`Cannot mark as copied - pending message not found: ${pendingId}`);

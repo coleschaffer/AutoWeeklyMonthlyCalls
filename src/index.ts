@@ -999,6 +999,36 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 // ===========================================
+// Database Initialization
+// ===========================================
+
+async function initializeDatabase() {
+  if (!env.DATABASE_URL) {
+    console.log('DATABASE_URL not set - using in-memory storage (data will not persist)');
+    return false;
+  }
+
+  try {
+    const { initializeSchema, isConnected } = await import('./db/index.js');
+
+    // Test connection
+    const connected = await isConnected();
+    if (!connected) {
+      console.error('Database connection failed');
+      return false;
+    }
+
+    // Initialize schema
+    await initializeSchema();
+    console.log('Database initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('Database initialization failed:', error);
+    return false;
+  }
+}
+
+// ===========================================
 // Cron Jobs Setup (lazy loaded)
 // ===========================================
 
@@ -1082,8 +1112,10 @@ app.listen(PORT, () => {
   console.log(`  - Set Message modal for custom edits`);
   console.log('===========================================');
 
-  // Setup cron jobs after server starts (non-blocking)
-  setupCronJobs();
+  // Initialize database and setup cron jobs after server starts (non-blocking)
+  initializeDatabase().then(() => {
+    setupCronJobs();
+  });
 });
 
 export default app;

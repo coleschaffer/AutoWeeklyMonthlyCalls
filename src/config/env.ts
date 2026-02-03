@@ -46,6 +46,9 @@ const envSchema = z.object({
   SLACK_CA_PRO_CHANNEL_ID: z.string().optional(), // #ca-pro channel ID to watch for topics
   SLACK_REBECCA_USER_ID: z.string().optional(), // Rebecca's user ID - tagged after reminders generated
 
+  // Database
+  DATABASE_URL: z.string().optional(),
+
   // App
   PORT: z.string().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -118,6 +121,9 @@ function createDevConfig() {
     // Topic watcher / mention handler
     SLACK_CA_PRO_CHANNEL_ID: process.env.SLACK_CA_PRO_CHANNEL_ID,
     SLACK_REBECCA_USER_ID: process.env.SLACK_REBECCA_USER_ID,
+
+    // Database
+    DATABASE_URL: process.env.DATABASE_URL,
 
     // App
     PORT: process.env.PORT || '3000',

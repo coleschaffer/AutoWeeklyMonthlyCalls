@@ -2,7 +2,7 @@ import * as slack from '../services/slack.js';
 import * as claude from '../services/claude.js';
 import * as zoom from '../services/zoom.js';
 import { env } from '../config/env.js';
-import { storePending, storeReminderTopic } from '../services/pending-store.js';
+import { storePending, storeReminderTopic, hasMentionBeenProcessed, markMentionProcessed } from '../services/pending-store.js';
 import {
   getReminderTemplates,
   renderTemplate,
@@ -15,10 +15,6 @@ import {
 
 // Rebecca's user ID - will be tagged after reminders are generated
 const REBECCA_USER_ID = env.SLACK_REBECCA_USER_ID;
-
-// Track processed mentions to avoid duplicates
-const processedMentions: Map<string, Date> = new Map();
-const DUPLICATE_WINDOW_MS = 60 * 1000; // 1 minute window
 
 /**
  * Handle an @mention of the bot in a channel
@@ -33,21 +29,14 @@ export async function handleAppMention(event: {
 }): Promise<void> {
   const { channel, user, text, ts, thread_ts } = event;
 
-  // Avoid duplicate processing
+  // Avoid duplicate processing (using database)
   const mentionKey = `${channel}:${ts}`;
-  if (processedMentions.has(mentionKey)) {
+  if (await hasMentionBeenProcessed(mentionKey)) {
     return;
   }
 
-  // Clean up old entries
-  const now = new Date();
-  for (const [key, timestamp] of processedMentions.entries()) {
-    if (now.getTime() - timestamp.getTime() > DUPLICATE_WINDOW_MS) {
-      processedMentions.delete(key);
-    }
-  }
-
-  processedMentions.set(mentionKey, now);
+  // Mark as processed immediately
+  await markMentionProcessed(mentionKey);
 
   // Remove the bot mention from the text to get the actual topic
   // Slack formats mentions as <@BOTID>
@@ -110,7 +99,7 @@ export async function handleAppMention(event: {
     // Store the topic for later use by recap generation
     // This links the reminder topic to the recording webhook
     if (zoomInfo?.startTime) {
-      storeReminderTopic(callType, zoomInfo.startTime, topicInfo.topic, parsed.presenter);
+      await storeReminderTopic(callType, zoomInfo.startTime, topicInfo.topic, parsed.presenter);
     }
     const zoomLink = zoomInfo?.joinUrl || 'https://us06web.zoom.us/j/your-meeting-id';
     const callTime = zoomInfo?.startTime

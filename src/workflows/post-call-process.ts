@@ -46,7 +46,7 @@ export async function processRecording(
 
     // Try to get the topic from the stored reminder first
     // This ensures recaps use the same topic that was used for reminders
-    const storedTopic = getReminderTopic(callType, recording.startTime);
+    const storedTopic = await getReminderTopic(callType, recording.startTime);
     const topic = storedTopic?.topic || zoom.extractTopicFromMeeting(rawTopic);
 
     console.log(`Detected call type: ${callType}`);
