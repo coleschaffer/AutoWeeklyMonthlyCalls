@@ -3,75 +3,108 @@ import { env } from '../config/env.js';
 import { config } from '../config/env.js';
 import type { EmailCampaignData, EmailSendResult } from '../types/index.js';
 
-// Ensure the API URL doesn't have trailing slash and doesn't already include /api/3
+// Ensure the API URL doesn't have trailing slash
 function normalizeApiUrl(url: string): string {
   let normalized = url.replace(/\/+$/, ''); // Remove trailing slashes
-  // If URL already includes /api/3, use it as-is
-  if (normalized.includes('/api/3')) {
-    // Remove /api/3 from the end so we can add it consistently
-    normalized = normalized.replace(/\/api\/3\/?$/, '');
-  }
+  // If URL already includes /api/3 or /admin, strip it
+  normalized = normalized.replace(/\/api\/3\/?$/, '');
+  normalized = normalized.replace(/\/admin\/?$/, '');
   return normalized;
 }
 
-const acClient = axios.create({
-  baseURL: normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL),
+const baseUrl = normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL);
+
+// V3 API client (for contacts, lists, etc.)
+const acClientV3 = axios.create({
+  baseURL: baseUrl,
   headers: {
     'Api-Token': env.ACTIVECAMPAIGN_API_KEY,
     'Content-Type': 'application/json',
   },
 });
 
+// V1 API client (for campaign creation - uses different auth)
+const acClientV1 = axios.create({
+  baseURL: baseUrl,
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded',
+  },
+});
+
 // Log the configured URL on init for debugging
-console.log(`[ActiveCampaign] Configured base URL: ${normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL)}`);
+console.log(`[ActiveCampaign] Configured base URL: ${baseUrl}`);
 
 /**
  * Send a campaign email to a list
  */
+/**
+ * Send a campaign using the V1 API (which has documented campaign creation support)
+ * V1 API docs: https://www.activecampaign.com/api/example.php?call=campaign_create
+ */
 export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendResult> {
   try {
     console.log(`[ActiveCampaign] Creating campaign for list ${data.listId}: "${data.subject}"`);
+    console.log(`[ActiveCampaign] Using V1 API at: ${baseUrl}/admin/api.php`);
 
-    // Step 1: Create a campaign
-    const campaignResponse = await acClient.post('/api/3/campaigns', {
-      campaign: {
-        type: 'single', // One-time email
-        name: `Auto: ${data.subject}`,
-        status: 0, // Draft
-        public: 0,
-        segmentid: 0, // Use list instead of segment
-      },
+    // Step 1: Create the message first (V1 API)
+    const messageParams = new URLSearchParams({
+      api_key: env.ACTIVECAMPAIGN_API_KEY,
+      api_action: 'message_add',
+      api_output: 'json',
+      format: 'html',
+      subject: data.subject,
+      fromemail: data.fromEmail || 'team@copyaccelerator.com',
+      fromname: data.fromName || 'CA Pro Team',
+      reply2: data.fromEmail || 'team@copyaccelerator.com',
+      priority: '3',
+      charset: 'utf-8',
+      encoding: 'quoted-printable',
+      htmlconstructor: 'editor',
+      html: formatEmailHtml(data.body),
+      text: data.body,
+      [`p[${data.listId}]`]: data.listId.toString(),
     });
 
-    const campaignId = campaignResponse.data.campaign.id;
-    console.log(`[ActiveCampaign] Campaign created: ${campaignId}`);
+    const messageResponse = await acClientV1.post('/admin/api.php', messageParams.toString());
 
-    // Step 2: Create the message content
-    await acClient.post('/api/3/messages', {
-      message: {
-        campaign: campaignId,
-        fromname: data.fromName || 'CA Pro Team',
-        fromemail: data.fromEmail || 'team@capro.com',
-        reply2: data.fromEmail || 'team@capro.com',
-        subject: data.subject,
-        html: formatEmailHtml(data.body),
-        text: data.body,
-      },
+    if (!messageResponse.data || messageResponse.data.result_code === 0) {
+      throw new Error(`Message creation failed: ${messageResponse.data?.result_message || 'Unknown error'}`);
+    }
+
+    const messageId = messageResponse.data.id;
+    console.log(`[ActiveCampaign] Message created: ${messageId}`);
+
+    // Step 2: Create the campaign (V1 API)
+    const sendDate = new Date();
+    sendDate.setMinutes(sendDate.getMinutes() + 5); // Schedule 5 minutes from now
+    const formattedDate = sendDate.toISOString().replace('T', ' ').substring(0, 19);
+
+    const campaignParams = new URLSearchParams({
+      api_key: env.ACTIVECAMPAIGN_API_KEY,
+      api_action: 'campaign_create',
+      api_output: 'json',
+      type: 'single',
+      name: `Auto: ${data.subject}`,
+      sdate: formattedDate,
+      status: '1', // 1 = scheduled/active
+      public: '1',
+      tracklinks: 'all',
+      trackreads: '1',
+      trackreplies: '0',
+      htmlunsub: '1',
+      textunsub: '1',
+      [`p[${data.listId}]`]: data.listId.toString(),
+      [`m[${messageId}]`]: '100', // 100% of sends use this message
     });
-    console.log(`[ActiveCampaign] Message content created for campaign ${campaignId}`);
 
-    // Step 3: Associate campaign with list
-    await acClient.post('/api/3/campaignLists', {
-      campaignList: {
-        campaign: campaignId,
-        list: data.listId,
-      },
-    });
-    console.log(`[ActiveCampaign] Campaign ${campaignId} associated with list ${data.listId}`);
+    const campaignResponse = await acClientV1.post('/admin/api.php', campaignParams.toString());
 
-    // Step 4: Send the campaign
-    await acClient.post(`/api/3/campaigns/${campaignId}/send`);
-    console.log(`[ActiveCampaign] Campaign ${campaignId} sent successfully`);
+    if (!campaignResponse.data || campaignResponse.data.result_code === 0) {
+      throw new Error(`Campaign creation failed: ${campaignResponse.data?.result_message || 'Unknown error'}`);
+    }
+
+    const campaignId = campaignResponse.data.id;
+    console.log(`[ActiveCampaign] Campaign created and scheduled: ${campaignId}`);
 
     return {
       success: true,
@@ -94,29 +127,16 @@ export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendRe
         response: JSON.stringify(responseData, null, 2),
       });
 
-      // Provide specific guidance for common errors
-      if (status === 405) {
-        return {
-          success: false,
-          error: `ActiveCampaign 405 Error: The Campaign API is not available. This usually means:\n` +
-            `1. Your ActiveCampaign plan doesn't include Marketing features (Campaigns require Marketing tier)\n` +
-            `2. Or the API URL format is incorrect\n\n` +
-            `Your configured URL: ${normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL)}\n` +
-            `Expected format: https://youraccountname.api-us1.com\n\n` +
-            `To fix: Either upgrade your AC plan, or manually send emails and use the bot just for copy generation.`,
-        };
-      }
-
       if (status === 403) {
         return {
           success: false,
-          error: `ActiveCampaign 403 Forbidden: API key doesn't have permission for campaigns. Check your API key permissions.`,
+          error: `ActiveCampaign 403 Forbidden: API key doesn't have permission. Check your API key permissions.`,
         };
       }
 
       return {
         success: false,
-        error: `ActiveCampaign API error ${status}: ${responseData?.message || responseData?.errors?.[0]?.title || statusText || 'Unknown error'}`,
+        error: `ActiveCampaign API error ${status}: ${responseData?.result_message || responseData?.message || statusText || 'Unknown error'}`,
       };
     }
 
@@ -144,7 +164,7 @@ export async function sendEmail(
     // This is a simplified version - in production, you might want to use
     // ActiveCampaign's transactional email feature or a dedicated service
 
-    const response = await acClient.post('/api/3/contactEmails', {
+    const response = await acClientV3.post('/api/3/contactEmails', {
       contactEmail: {
         contact: to,
         subject,
@@ -245,7 +265,7 @@ function formatEmailHtml(plainText: string): string {
  * Get list details
  */
 export async function getList(listId: number) {
-  const response = await acClient.get(`/api/3/lists/${listId}`);
+  const response = await acClientV3.get(`/api/3/lists/${listId}`);
   return response.data.list;
 }
 
@@ -254,7 +274,7 @@ export async function getList(listId: number) {
  */
 export async function checkActiveCampaignConnection(): Promise<boolean> {
   try {
-    await acClient.get('/api/3/users/me');
+    await acClientV3.get('/api/3/users/me');
     return true;
   } catch (error) {
     console.error('ActiveCampaign connection check failed:', error);
