@@ -1,0 +1,387 @@
+import * as slack from '../services/slack.js';
+import * as claude from '../services/claude.js';
+import * as zoom from '../services/zoom.js';
+import { env } from '../config/env.js';
+import { storePendingMessage, getPendingMessage } from '../services/pending-store.js';
+import {
+  getRecapTemplates,
+  TEMPLATE_IDS,
+} from '../config/templates.js';
+
+// ===========================================
+// Mention Handler - Handles @CA Pro Calls mentions
+// ===========================================
+
+// Rebecca's user ID - will be tagged after reminders are generated
+const REBECCA_USER_ID = env.SLACK_REBECCA_USER_ID;
+
+// Track processed mentions to avoid duplicates
+const processedMentions: Map<string, Date> = new Map();
+const DUPLICATE_WINDOW_MS = 60 * 1000; // 1 minute window
+
+/**
+ * Handle an @mention of the bot in a channel
+ * When someone @mentions the bot with a topic, generate reminders in a thread
+ */
+export async function handleAppMention(event: {
+  channel: string;
+  user: string;
+  text: string;
+  ts: string;
+  thread_ts?: string;
+}): Promise<void> {
+  const { channel, user, text, ts, thread_ts } = event;
+
+  // Avoid duplicate processing
+  const mentionKey = `${channel}:${ts}`;
+  if (processedMentions.has(mentionKey)) {
+    return;
+  }
+
+  // Clean up old entries
+  const now = new Date();
+  for (const [key, timestamp] of processedMentions.entries()) {
+    if (now.getTime() - timestamp.getTime() > DUPLICATE_WINDOW_MS) {
+      processedMentions.delete(key);
+    }
+  }
+
+  processedMentions.set(mentionKey, now);
+
+  // Remove the bot mention from the text to get the actual topic
+  // Slack formats mentions as <@BOTID>
+  const cleanText = text.replace(/<@[A-Z0-9]+>/g, '').trim();
+
+  if (!cleanText) {
+    // Empty mention - ask what topic they want
+    await slack.postMessage(
+      channel,
+      "Hey! What topic would you like me to generate reminders for? Just @mention me again with the topic.",
+      undefined,
+      undefined,
+      ts
+    );
+    return;
+  }
+
+  console.log(`[Mention Handler] Processing mention: "${cleanText.substring(0, 80)}..."`);
+
+  // Detect if this is a topic announcement
+  const topicInfo = await claude.detectTopicInMessage(cleanText, '', true);
+
+  if (!topicInfo.isTopic || !topicInfo.topic) {
+    // Not recognized as a topic - ask for clarification
+    await slack.postMessage(
+      channel,
+      `I'm not sure I understood the topic. Could you rephrase it?\n\nFor example: "@CA Pro Calls Copy Chief Checklist - How to evaluate copy quality"`,
+      undefined,
+      undefined,
+      ts
+    );
+    return;
+  }
+
+  // Determine call type based on upcoming schedule
+  const callType = await determineCallType();
+  const callLabel = callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner';
+
+  // Post initial response in thread
+  await slack.postMessage(
+    channel,
+    `📣 Got it! Generating ${callLabel} reminders for: *${topicInfo.topic}*\n\nPlease wait...`,
+    undefined,
+    undefined,
+    ts
+  );
+
+  try {
+    // Fetch Zoom link
+    const zoomInfo = await zoom.getJoinUrlForNextCall(callType);
+    const zoomLink = zoomInfo?.joinUrl || 'https://us06web.zoom.us/j/your-meeting-id';
+    const callTime = zoomInfo?.startTime
+      ? formatCallTime(zoomInfo.startTime)
+      : callType === 'weekly' ? 'Tuesday @ 1 PM EST' : 'Monday @ 2 PM EST';
+
+    // Generate reminder description using Claude
+    const description = await claude.generateReminderDescription(topicInfo.topic, callType);
+
+    // Get templates
+    const templates = getRecapTemplates(callType);
+
+    // Generate Day Before reminder (WhatsApp)
+    if (callType === 'weekly') {
+      const dayBeforeMessage = templates.whatsappDayBefore
+        .replace('{{topic}}', topicInfo.topic)
+        .replace('{{description}}', description)
+        .replace('{{time}}', callTime)
+        .replace('{{zoomLink}}', zoomLink);
+
+      // Store and post Day Before WhatsApp
+      const dayBeforePendingId = storePendingMessage({
+        type: 'reminder',
+        channel: 'whatsapp',
+        callType,
+        timing: 'dayBefore',
+        message: dayBeforeMessage,
+        metadata: {
+          topic: topicInfo.topic,
+          description,
+          zoomLink,
+          callTime,
+        },
+      });
+
+      await postWhatsAppReminder(
+        channel,
+        ts,
+        '📅 DAY BEFORE Reminder (WhatsApp)',
+        dayBeforeMessage,
+        dayBeforePendingId
+      );
+    }
+
+    // Generate Day Of reminder (WhatsApp)
+    const dayOfWhatsAppMessage = templates.whatsappDayOf
+      .replace('{{topic}}', topicInfo.topic)
+      .replace('{{description}}', description)
+      .replace('{{time}}', callTime)
+      .replace('{{zoomLink}}', zoomLink);
+
+    const dayOfWhatsAppPendingId = storePendingMessage({
+      type: 'reminder',
+      channel: 'whatsapp',
+      callType,
+      timing: 'dayOf',
+      message: dayOfWhatsAppMessage,
+      metadata: {
+        topic: topicInfo.topic,
+        description,
+        zoomLink,
+        callTime,
+      },
+    });
+
+    await postWhatsAppReminder(
+      channel,
+      ts,
+      '📅 DAY OF Reminder (WhatsApp)',
+      dayOfWhatsAppMessage,
+      dayOfWhatsAppPendingId
+    );
+
+    // Generate Day Of reminder (Email)
+    const dayOfEmailMessage = templates.emailDayOf
+      .replace('{{topic}}', topicInfo.topic)
+      .replace('{{description}}', description)
+      .replace('{{time}}', callTime)
+      .replace('{{zoomLink}}', zoomLink);
+
+    const dayOfEmailPendingId = storePendingMessage({
+      type: 'reminder',
+      channel: 'email',
+      callType,
+      timing: 'dayOf',
+      message: dayOfEmailMessage,
+      metadata: {
+        topic: topicInfo.topic,
+        description,
+        zoomLink,
+        callTime,
+      },
+    });
+
+    await postEmailReminder(
+      channel,
+      ts,
+      '📧 DAY OF Reminder (Email)',
+      dayOfEmailMessage,
+      dayOfEmailPendingId
+    );
+
+    // Tag Rebecca if configured
+    if (REBECCA_USER_ID) {
+      await slack.postMessage(
+        channel,
+        `<@${REBECCA_USER_ID}> Reminders are ready above! ☝️`,
+        undefined,
+        undefined,
+        ts
+      );
+    }
+
+    console.log(`[Mention Handler] Generated reminders for: "${topicInfo.topic}"`);
+  } catch (error) {
+    console.error('[Mention Handler] Error generating reminders:', error);
+    await slack.postMessage(
+      channel,
+      `⚠️ Sorry, I had trouble generating the reminders. Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      undefined,
+      undefined,
+      ts
+    );
+  }
+}
+
+/**
+ * Determine if this is for a weekly or monthly call based on Zoom schedule
+ */
+async function determineCallType(): Promise<'weekly' | 'monthly'> {
+  try {
+    const weeklyCall = await zoom.getJoinUrlForNextCall('weekly');
+    const monthlyCall = await zoom.getJoinUrlForNextCall('monthly');
+
+    if (!weeklyCall && monthlyCall) {
+      return 'monthly';
+    }
+
+    if (weeklyCall && monthlyCall) {
+      if (monthlyCall.startTime < weeklyCall.startTime) {
+        return 'monthly';
+      }
+    }
+
+    return 'weekly';
+  } catch (error) {
+    console.error('[Mention Handler] Error determining call type:', error);
+    return 'weekly';
+  }
+}
+
+/**
+ * Format call time for display
+ */
+function formatCallTime(date: Date): string {
+  return date.toLocaleString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York',
+  }) + ' EST';
+}
+
+/**
+ * Post a WhatsApp reminder with Copy button
+ */
+async function postWhatsAppReminder(
+  channel: string,
+  threadTs: string,
+  header: string,
+  message: string,
+  pendingId: string
+): Promise<void> {
+  const baseUrl = env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'https://autoweeklymonthlycalls-production.up.railway.app';
+  const copyUrl = `${baseUrl}/copy.html?text=${encodeURIComponent(message)}`;
+
+  const blocks = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: header,
+        emoji: true,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '```' + message + '```',
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '📋 Copy',
+            emoji: true,
+          },
+          url: copyUrl,
+          action_id: `copy_whatsapp_${pendingId}`,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+
+  await slack.postMessage(channel, message, blocks, undefined, threadTs);
+}
+
+/**
+ * Post an Email reminder with Approve button
+ */
+async function postEmailReminder(
+  channel: string,
+  threadTs: string,
+  header: string,
+  message: string,
+  pendingId: string
+): Promise<void> {
+  const blocks = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: header,
+        emoji: true,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '```' + message + '```',
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✅ Approve to Send',
+            emoji: true,
+          },
+          style: 'primary',
+          action_id: 'approve_email',
+          value: pendingId,
+        },
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: '✏️ Set Message',
+            emoji: true,
+          },
+          action_id: 'set_message',
+          value: pendingId,
+        },
+      ],
+    },
+  ];
+
+  await slack.postMessage(channel, message, blocks, undefined, threadTs);
+}
+
+/**
+ * Check if mention handling is properly configured
+ */
+export function isMentionHandlerConfigured(): boolean {
+  return !!env.SLACK_BOT_TOKEN;
+}

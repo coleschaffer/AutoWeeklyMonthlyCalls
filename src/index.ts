@@ -304,6 +304,20 @@ app.post('/api/slack/events', async (req: Request, res: Response) => {
     // In production, you'd use a custom middleware to preserve raw body
     const slack = await import('./services/slack.js');
 
+    // Handle app_mention events (when someone @mentions the bot)
+    if (payload.event?.type === 'app_mention') {
+      const event = payload.event;
+      console.log('Slack app_mention received:', event.text?.substring(0, 80));
+
+      // Handle mention in background
+      const mentionHandler = await import('./workflows/mention-handler.js');
+      mentionHandler.handleAppMention(event).catch(err => {
+        console.error('Error handling app mention:', err);
+      });
+
+      return res.json({ ok: true });
+    }
+
     // Handle message events
     if (payload.event?.type === 'message') {
       const event = payload.event;
@@ -1004,8 +1018,8 @@ app.listen(PORT, () => {
   console.log(`  POST /api/slack/test-topic-detection - Test topic detection`);
   console.log('');
   console.log('Bot Features:');
+  console.log(`  - @mention bot with topic -> generates reminders in thread`);
   console.log(`  - DM topic -> generates Weekly/Monthly reminders`);
-  console.log(`  - #ca-pro channel watcher -> detects Stefan's topic announcements`);
   console.log(`  - Auto-recap after Zoom -> Circle/WhatsApp/Email approval`);
   console.log(`  - Set Message modal for custom edits`);
   console.log('===========================================');
