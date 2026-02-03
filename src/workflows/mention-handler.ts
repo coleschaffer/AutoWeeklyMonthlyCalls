@@ -67,14 +67,18 @@ export async function handleAppMention(event: {
 
   console.log(`[Mention Handler] Processing mention: "${cleanText.substring(0, 80)}..."`);
 
+  // Parse the message for topic, presenter, and extra context
+  // Format: "Topic Name" or "Topic Name - extra context" or "Topic Name - Angela is running this"
+  const parsed = parseTopicMessage(cleanText);
+
   // Detect if this is a topic announcement
-  const topicInfo = await claude.detectTopicInMessage(cleanText, '', true);
+  const topicInfo = await claude.detectTopicInMessage(parsed.rawTopic, '', true);
 
   if (!topicInfo.isTopic || !topicInfo.topic) {
     // Not recognized as a topic - ask for clarification
     await slack.postMessage(
       channel,
-      `I'm not sure I understood the topic. Could you rephrase it?\n\nFor example: "@CA Pro Calls Copy Chief Checklist - How to evaluate copy quality"`,
+      `I'm not sure I understood the topic. Could you rephrase it?\n\nFormat: "@CA Pro Calls Topic Name"\nWith context: "@CA Pro Calls Topic Name - Angela is presenting, covering her review process"`,
       undefined,
       undefined,
       ts
@@ -86,14 +90,18 @@ export async function handleAppMention(event: {
   const callType = await determineCallType();
   const callLabel = callType === 'weekly' ? 'Weekly Training' : 'Monthly Business Owner';
 
+  // Build confirmation message
+  let confirmMsg = `📣 Got it! Generating ${callLabel} reminders for: *${topicInfo.topic}*`;
+  if (parsed.presenter !== 'Stefan') {
+    confirmMsg += `\n👤 Presenter: ${parsed.presenter}`;
+  }
+  if (parsed.extraContext) {
+    confirmMsg += `\n📝 Context: ${parsed.extraContext}`;
+  }
+  confirmMsg += '\n\nPlease wait...';
+
   // Post initial response in thread
-  await slack.postMessage(
-    channel,
-    `📣 Got it! Generating ${callLabel} reminders for: *${topicInfo.topic}*\n\nPlease wait...`,
-    undefined,
-    undefined,
-    ts
-  );
+  await slack.postMessage(channel, confirmMsg, undefined, undefined, ts);
 
   try {
     // Fetch Zoom link
@@ -101,10 +109,15 @@ export async function handleAppMention(event: {
     const zoomLink = zoomInfo?.joinUrl || 'https://us06web.zoom.us/j/your-meeting-id';
     const callTime = zoomInfo?.startTime
       ? formatCallTime(zoomInfo.startTime)
-      : callType === 'weekly' ? 'Tuesday @ 1 PM EST' : 'Monday @ 2 PM EST';
+      : callType === 'weekly' ? '1:00 PM' : '2:00 PM';
 
-    // Generate reminder description using Claude
-    const description = await claude.generateReminderDescription(topicInfo.topic, callType);
+    // Generate reminder description using Claude (with presenter and context)
+    const description = await claude.generateReminderDescription(
+      topicInfo.topic,
+      callType,
+      parsed.presenter,
+      parsed.extraContext
+    );
 
     // Build context for template rendering
     const reminderContext: ReminderContext = {
@@ -236,6 +249,54 @@ export async function handleAppMention(event: {
       ts
     );
   }
+}
+
+/**
+ * Parse a topic message for topic, presenter, and extra context
+ * Examples:
+ *   "Copy Chief Checklist" → { rawTopic: "Copy Chief Checklist", presenter: "Stefan", extraContext: undefined }
+ *   "Copy Chief Checklist - Angela is presenting" → { rawTopic: "Copy Chief Checklist", presenter: "Angela", extraContext: "Angela is presenting" }
+ *   "VSL Breakdown - with guest John Carlton" → { rawTopic: "VSL Breakdown", presenter: "Stefan", extraContext: "with guest John Carlton" }
+ */
+function parseTopicMessage(text: string): {
+  rawTopic: string;
+  presenter: string;
+  extraContext?: string;
+} {
+  // Default presenter is Stefan
+  let presenter = 'Stefan';
+  let extraContext: string | undefined;
+  let rawTopic = text;
+
+  // Check if there's a dash or hyphen separating topic from context
+  const dashMatch = text.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+  if (dashMatch) {
+    rawTopic = dashMatch[1].trim();
+    extraContext = dashMatch[2].trim();
+
+    // Try to detect if someone else is presenting
+    // Look for patterns like "Angela is presenting", "with Angela", "Angela running", etc.
+    const presenterPatterns = [
+      /^(\w+)\s+(?:is\s+)?(?:presenting|running|hosting|leading|doing)/i,
+      /^(?:with|featuring|by)\s+(\w+)/i,
+      /^(\w+)\s+(?:will\s+)?(?:cover|present|run|host|lead|do)/i,
+    ];
+
+    for (const pattern of presenterPatterns) {
+      const match = extraContext.match(pattern);
+      if (match && match[1]) {
+        // Check if it's a name (capitalized, not a common word)
+        const possibleName = match[1];
+        const commonWords = ['this', 'that', 'the', 'she', 'he', 'they', 'it', 'we', 'her', 'his'];
+        if (!commonWords.includes(possibleName.toLowerCase()) && /^[A-Z]/.test(possibleName)) {
+          presenter = possibleName;
+          break;
+        }
+      }
+    }
+  }
+
+  return { rawTopic, presenter, extraContext };
 }
 
 /**

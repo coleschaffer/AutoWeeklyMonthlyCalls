@@ -334,9 +334,12 @@ export interface ReminderGenerationContext {
  */
 export async function generateReminderDescription(
   topic: string,
-  callType: CallType
+  callType: CallType,
+  presenter: string = 'Stefan',
+  extraContext?: string
 ): Promise<string> {
   const typeLabel = callType === 'weekly' ? 'Weekly Training Call' : 'Monthly Business Owner Call';
+  const contextNote = extraContext ? `\n\nAdditional context provided: "${extraContext}"` : '';
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
@@ -344,22 +347,22 @@ export async function generateReminderDescription(
     messages: [
       {
         role: 'user',
-        content: `Write a single compelling sentence (15-25 words) describing what attendees will learn or gain from a CA Pro ${typeLabel} about "${topic}".
+        content: `Write a single compelling sentence (15-25 words) describing what attendees will learn from a CA Pro ${typeLabel} about "${topic}".
+
+The presenter is: ${presenter}${contextNote}
 
 CRITICAL Rules:
-- DO NOT invent specific details not in the topic (no specific numbers, lists, or frameworks you made up)
-- DO NOT start with "Stefan" (the email template already mentions him)
-- Start with an action verb focused on the attendee benefit: "Learn...", "Discover...", "Get...", "See..."
-- Be specific about the value without making up details
+- Start with "${presenter}" as the subject: "${presenter} shares...", "${presenter} breaks down...", "${presenter} walks through..."
+- DO NOT invent specific details not mentioned (no made-up numbers, lists, or frameworks)
+- Be specific about the value without making things up
 - Don't use generic phrases like "learn about" or "discuss"
 - Don't mention the call type or time
-- Keep it genuine - only reference what's actually in the topic name
+- Keep it genuine - only reference what's actually provided
 
-Example topics and good descriptions:
-- "Email Funnel Breakdown" → "See a high-converting email funnel broken down piece by piece, with the psychology behind each element explained."
-- "VSL Rewrite Session" → "Watch a struggling VSL get rewritten live, with the reasoning behind each change explained in real-time."
-- "Copy Chief Checklist" → "Learn the systematic approach to evaluating copy before any campaign goes live."
-- "Q&A and Hot Seats" → "Get your copy questions answered live and see real funnels diagnosed on the spot."
+Example format:
+- "Copy Chief Checklist" → "Stefan walks through his personal checklist for evaluating copy quality before any campaign goes live."
+- "Email Funnel Breakdown" → "Stefan breaks down a high-converting email funnel piece by piece, explaining what makes each element work."
+- "Q&A and Hot Seats" → "Stefan answers your copy questions live and diagnoses real funnels from members."
 
 Now write a description for: "${topic}"`,
       },
@@ -369,7 +372,7 @@ Now write a description for: "${topic}"`,
   const description =
     response.content[0].type === 'text'
       ? response.content[0].text.trim()
-      : `Learn practical strategies for ${topic} that you can implement immediately.`;
+      : `${presenter} covers ${topic} with actionable strategies you can implement immediately.`;
 
   // Clean up any quotes or extra formatting
   return description.replace(/^["']|["']$/g, '').trim();

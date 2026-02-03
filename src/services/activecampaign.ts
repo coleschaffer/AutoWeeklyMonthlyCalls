@@ -91,12 +91,32 @@ export async function sendCampaign(data: EmailCampaignData): Promise<EmailSendRe
         statusText,
         url: requestUrl,
         method: requestMethod,
-        response: responseData,
+        response: JSON.stringify(responseData, null, 2),
       });
+
+      // Provide specific guidance for common errors
+      if (status === 405) {
+        return {
+          success: false,
+          error: `ActiveCampaign 405 Error: The Campaign API is not available. This usually means:\n` +
+            `1. Your ActiveCampaign plan doesn't include Marketing features (Campaigns require Marketing tier)\n` +
+            `2. Or the API URL format is incorrect\n\n` +
+            `Your configured URL: ${normalizeApiUrl(env.ACTIVECAMPAIGN_API_URL)}\n` +
+            `Expected format: https://youraccountname.api-us1.com\n\n` +
+            `To fix: Either upgrade your AC plan, or manually send emails and use the bot just for copy generation.`,
+        };
+      }
+
+      if (status === 403) {
+        return {
+          success: false,
+          error: `ActiveCampaign 403 Forbidden: API key doesn't have permission for campaigns. Check your API key permissions.`,
+        };
+      }
 
       return {
         success: false,
-        error: `ActiveCampaign API error ${status}: ${responseData?.message || statusText || 'Unknown error'}`,
+        error: `ActiveCampaign API error ${status}: ${responseData?.message || responseData?.errors?.[0]?.title || statusText || 'Unknown error'}`,
       };
     }
 
